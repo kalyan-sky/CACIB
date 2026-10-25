@@ -17,7 +17,10 @@ metadata:
     purpose: training-lab
 availabilityZones: ["__REGION__a", "__REGION__b", "__REGION__c"]
 iam:
-  withOIDC: true
+  # No IAM OIDC provider: nothing in the lab needs IRSA, and sandbox / company
+  # accounts often block OIDC provider APIs with a service control policy.
+  # The node role gets AmazonEKS_CNI_Policy instead, which VPC CNI uses.
+  withOIDC: false
 vpc:
   nat:
     gateway: __NAT__          # Disable = cheapest (nodes in public subnets); Single = private nodes

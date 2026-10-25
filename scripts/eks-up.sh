@@ -43,6 +43,9 @@ REGISTRY="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 IMAGE="$REGISTRY/$REPO:$TAG"
 export IMAGE
 
+mkdir -p "$SIM_STATE"
+echo "$REGION" >"$SIM_STATE/eks-region"   # so eks-down.sh finds it even if this run fails
+
 info "AWS account $ACCOUNT, region $REGION, cluster '$CLUSTER', profile $PROFILE, $INSTANCE_TYPE x3"
 warn "this creates billable AWS resources - run scripts/eks-down.sh when you are done"
 
@@ -82,7 +85,6 @@ PY
 # ---------------------------------------------------------------- cluster
 if [ "$PRIVATE_NODES" = 1 ]; then nat=Single private=true; else nat=Disable private=false; fi
 cfg="$SIM_STATE/eks-cluster.yaml"
-mkdir -p "$SIM_STATE"
 sed -e "s|__CLUSTER__|$CLUSTER|g" -e "s|__REGION__|$REGION|g" \
   -e "s|__INSTANCE_TYPE__|$INSTANCE_TYPE|g" -e "s|__NAT__|$nat|g" -e "s|__PRIVATE__|$private|g" \
   "$ROOT/platform/eks-cluster.yaml" >"$cfg"
@@ -98,8 +100,10 @@ if eksctl get cluster --name "$CLUSTER" --region "$REGION" >/dev/null 2>&1; then
   # A previous run may have been interrupted (e.g. a CloudShell session timing
   # out) after the control plane but before the worker nodes: finish the job.
   if ! eksctl get nodegroup --cluster "$CLUSTER" --region "$REGION" -o json 2>/dev/null | grep -q '"workers"'; then
-    info "Node group missing - configuring add-ons and creating it"
-    eksctl update addon -f "$cfg" || warn "could not update add-ons; check vpc-cni settings in the EKS console"
+    # vpc-cni must carry the network-policy / prefix-delegation config before nodes join
+    eksctl get addon --cluster "$CLUSTER" --region "$REGION" -o json 2>/dev/null | grep -q '"vpc-cni"' ||
+      die "cluster '$CLUSTER' was only partly created (no add-ons). Delete it with 'make eks-down', then run 'make eks-up' again"
+    info "Node group missing (an earlier run was interrupted) - creating it"
     eksctl create nodegroup -f "$cfg"
   fi
 else

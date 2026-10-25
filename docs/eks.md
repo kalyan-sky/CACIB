@@ -34,6 +34,8 @@ The audit accepts ECR as an approved registry.
   pip install -r requirements.txt
   # Docker Desktop (includes buildx)
   ```
+- Region: CloudShell sets `AWS_REGION` to the console's region, and `eks-up` uses it. Choose Singapore
+  in the console's region menu, or run `AWS_REGION=ap-southeast-1 make eks-up`.
 - Credentials:
   ```bash
   aws configure            # or: aws configure sso && aws sso login
@@ -147,6 +149,7 @@ aws ecr describe-repositories --region ap-southeast-1
 | `ImagePullBackOff`, 403 | The node role lacks `AmazonEC2ContainerRegistryReadOnly` (eksctl adds it by default), or the region doesn't match. |
 | Scenario 03 doesn't break | Network policy isn't enforced. `kubectl -n kube-system get ds aws-node -o yaml | grep -i network-policy`, and check the vpc-cni addon config in the EKS console. |
 | `error: You must be logged in to the server (Unauthorized)` | Stale credentials. Run `aws sso login` / `aws sts get-caller-identity`, then `aws eks update-kubeconfig --name bank-sim --region ap-southeast-1 --alias eks-bank-sim`. |
+| `AccessDenied ... with an explicit deny in a service control policy` | Your AWS Organization blocks that API, and only its admin can change that. The cluster config no longer needs OIDC, the usual blocked call. If a run failed half-way, `make eks-down` deletes the leftovers through CloudFormation when eksctl is blocked. Other denials (instance types, regions) need a different `INSTANCE_TYPE` / `AWS_REGION`, or a request to your admin. |
 | `eksctl create cluster` fails on capacity / vCPU limit | Request a quota increase (Service Quotas → EC2 → Running On-Demand Standard instances), or try another instance type. |
 | Switching back to kind | `make up` re-targets kind. To point at EKS again: `echo eks-bank-sim > .sim-state/context` (and the ECR image in `.sim-state/image`), or re-run `make eks-up`. It reuses the existing cluster. |
 
