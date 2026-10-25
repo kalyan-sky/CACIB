@@ -1,0 +1,66 @@
+# Cluster-wide access model.
+#
+#   team-<domain>   application teams: deploy and operate their own workloads
+#                   in their own namespace only (RoleBinding rendered per namespace),
+#                   no Secrets, no exec into production pods.
+#   platform-sre    the platform team (you): operate every namespace and the nodes.
+#   internal-audit  read-only view across the estate for audit and risk reviews.
+#
+# Try it:  kubectl auth can-i create deployments -n payments --as=dev1 --as-group=team-payments
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: bank-sim:app-deployer
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "services", "endpoints", "configmaps", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps", "services"]
+    verbs: ["create", "update", "patch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: bank-sim:node-operator
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: bank-sim:platform-sre-admin
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: admin}
+subjects:
+  - {apiGroup: rbac.authorization.k8s.io, kind: Group, name: platform-sre}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: bank-sim:platform-sre-nodes
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: bank-sim:node-operator}
+subjects:
+  - {apiGroup: rbac.authorization.k8s.io, kind: Group, name: platform-sre}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: bank-sim:internal-audit-view
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view}
+subjects:
+  - {apiGroup: rbac.authorization.k8s.io, kind: Group, name: internal-audit}

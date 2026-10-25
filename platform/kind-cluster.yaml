@@ -1,0 +1,11 @@
+# Local stand-in for the bank's private cloud: one control plane and three
+# workers spread over two (simulated) Singapore data centres. setup.sh labels
+# the workers with topology.kubernetes.io/zone after creation.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: bank-sim
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+  - role: worker

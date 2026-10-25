@@ -1,0 +1,4 @@
+rendered/
+__pycache__/
+*.pyc
+.sim-state/

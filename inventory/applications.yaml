@@ -1,0 +1,1158 @@
+# Application inventory (the "CMDB") for the simulated bank.
+#
+# This file is the single source of truth. Run `make render` to turn it into
+# Kubernetes manifests under rendered/ - never edit rendered/ by hand.
+#
+# Fields:
+#   name         DNS-safe app id, unique per domain (namespace)
+#   domain       business domain = Kubernetes namespace
+#   tier         1 = critical (2+ replicas, PDB, zone spread), 2 = important, 3 = best effort
+#   exposure     "edge" = reachable from the ingress/traffic tier
+#   upstreams    <namespace>/<app> this app calls on every transaction
+#   core         part of the "lite" profile and of the incident scenarios
+#   resources    optional {cpu, memory} request override
+#   config       optional extra key/values for the app's ConfigMap
+
+domains:
+  payments:
+    team: team-payments
+    cost_centre: CC-SG-1100
+    data_classification: restricted
+    description: 'Payments & cash management: MEPS+, FAST/PayNow, SWIFT, GIRO'
+  core-banking:
+    team: team-core-banking
+    cost_centre: CC-SG-1200
+    data_classification: restricted
+    description: Accounts, ledgers, deposits and loans
+  trade-finance:
+    team: team-trade-finance
+    cost_centre: CC-SG-1300
+    data_classification: confidential
+    description: Letters of credit, guarantees, collections, supply-chain finance
+  treasury-markets:
+    team: team-treasury
+    cost_centre: CC-SG-1400
+    data_classification: confidential
+    description: FX, rates, liquidity and market-risk calculation
+  risk-compliance:
+    team: team-risk-compliance
+    cost_centre: CC-SG-1500
+    data_classification: restricted
+    description: Fraud, sanctions, AML/KYC and credit risk
+  channels:
+    team: team-digital-channels
+    cost_centre: CC-SG-1600
+    data_classification: confidential
+    description: Corporate portal, host-to-host and API banking
+  data-reporting:
+    team: team-data-reporting
+    cost_centre: CC-SG-1700
+    data_classification: confidential
+    description: Regulatory (MAS) and management reporting
+  shared-services:
+    team: team-shared-services
+    cost_centre: CC-SG-1800
+    data_classification: internal
+    description: Identity, notifications, audit logging, reference data
+applications:
+- name: payments-gateway
+  domain: payments
+  tier: 1
+  exposure: edge
+  description: 'Orchestrates outgoing payments: fraud check, FX conversion, ledger posting'
+  upstreams: [risk-compliance/fraud-screening, treasury-markets/fx-rates, core-banking/core-ledger]
+  core: true
+- name: paynow-fast-adapter
+  domain: payments
+  tier: 1
+  exposure: edge
+  description: Singapore FAST / PayNow real-time payments adapter
+  upstreams: [risk-compliance/fraud-screening, core-banking/core-ledger]
+  core: true
+- name: swift-connector
+  domain: payments
+  tier: 1
+  description: SWIFT MT/MX (ISO 20022) message gateway
+  upstreams: [risk-compliance/sanctions-screening]
+  core: true
+- name: core-ledger
+  domain: core-banking
+  tier: 1
+  description: General ledger and transaction posting engine
+  upstreams: [shared-services/audit-log-service]
+  core: true
+- name: account-service
+  domain: core-banking
+  tier: 1
+  description: Account master data and balances API
+  upstreams: [core-banking/core-ledger]
+  core: true
+- name: fraud-screening
+  domain: risk-compliance
+  tier: 1
+  description: Real-time transaction fraud scoring
+  upstreams: []
+  core: true
+- name: sanctions-screening
+  domain: risk-compliance
+  tier: 1
+  description: Name and payment screening against sanctions lists
+  upstreams: []
+  core: true
+- name: kyc-onboarding
+  domain: risk-compliance
+  tier: 2
+  exposure: edge
+  description: Corporate client KYC onboarding workflow
+  upstreams: [risk-compliance/sanctions-screening, shared-services/notification-service]
+  core: true
+- name: fx-rates
+  domain: treasury-markets
+  tier: 1
+  description: Streaming FX rates and conversion
+  upstreams: []
+  core: true
+- name: risk-calc-engine
+  domain: treasury-markets
+  tier: 2
+  description: Intraday market-risk (VaR) calculation
+  upstreams: [treasury-markets/fx-rates]
+  core: true
+- name: lc-issuance
+  domain: trade-finance
+  tier: 2
+  exposure: edge
+  description: Letter of credit issuance and amendment
+  upstreams: [risk-compliance/sanctions-screening, core-banking/account-service]
+  core: true
+- name: corporate-portal-api
+  domain: channels
+  tier: 1
+  exposure: edge
+  description: Backend-for-frontend of the corporate e-banking portal
+  upstreams: [shared-services/auth-token-service, core-banking/account-service]
+  core: true
+- name: mas-610-reporting
+  domain: data-reporting
+  tier: 3
+  description: MAS Notice 610 statistical return generation (monthly batch)
+  upstreams: [core-banking/core-ledger]
+  core: true
+- name: auth-token-service
+  domain: shared-services
+  tier: 1
+  description: OAuth2 token issuance for internal APIs
+  upstreams: []
+  core: true
+- name: audit-log-service
+  domain: shared-services
+  tier: 1
+  description: Tamper-evident audit trail sink
+  upstreams: []
+  core: true
+- name: notification-service
+  domain: shared-services
+  tier: 2
+  description: Email / SMS / SWIFT gpi notifications
+  upstreams: []
+  core: true
+- name: mt940-batch
+  domain: payments
+  tier: 2
+  description: mt940 (payments)
+  upstreams: [shared-services/audit-log-service]
+- name: standing-order-sync
+  domain: payments
+  tier: 1
+  description: standing order (payments)
+  upstreams: []
+- name: bulk-payments-batch
+  domain: payments
+  tier: 1
+  description: bulk payments (payments)
+  upstreams: [payments/swift-connector]
+- name: chargeback-processor
+  domain: payments
+  tier: 3
+  description: chargeback (payments)
+  upstreams: [payments/payments-gateway]
+- name: cutoff-scheduler-adapter
+  domain: payments
+  tier: 2
+  description: cutoff scheduler (payments)
+  upstreams: [payments/swift-connector, payments/paynow-fast-adapter]
+- name: cash-pooling-service
+  domain: payments
+  tier: 2
+  description: cash pooling (payments)
+  upstreams: [payments/swift-connector]
+- name: payroll-engine
+  domain: payments
+  tier: 3
+  description: payroll (payments)
+  upstreams: []
+- name: fee-calculator-sync
+  domain: payments
+  tier: 3
+  description: fee calculator (payments)
+  upstreams: [shared-services/audit-log-service]
+- name: direct-debit-worker
+  domain: payments
+  tier: 3
+  description: direct debit (payments)
+  upstreams: [shared-services/auth-token-service]
+- name: payment-returns-adapter
+  domain: payments
+  tier: 2
+  description: payment returns (payments)
+  upstreams: [payments/swift-connector]
+- name: nostro-recon-engine
+  domain: payments
+  tier: 3
+  description: nostro recon (payments)
+  upstreams: []
+- name: gpi-tracker-batch
+  domain: payments
+  tier: 2
+  description: gpi tracker (payments)
+  upstreams: []
+- name: payment-limits-worker
+  domain: payments
+  tier: 3
+  description: payment limits (payments)
+  upstreams: [payments/swift-connector, payments/payments-gateway]
+- name: meps-api
+  domain: payments
+  tier: 2
+  description: meps (payments)
+  upstreams: [payments/paynow-fast-adapter]
+- name: beneficiary-api
+  domain: payments
+  tier: 3
+  description: beneficiary (payments)
+  upstreams: [shared-services/auth-token-service, payments/paynow-fast-adapter]
+- name: cheque-clearing-sync
+  domain: payments
+  tier: 2
+  description: cheque clearing (payments)
+  upstreams: [shared-services/audit-log-service]
+- name: payment-routing-api
+  domain: payments
+  tier: 2
+  description: payment routing (payments)
+  upstreams: [shared-services/audit-log-service, shared-services/auth-token-service]
+- name: payment-status-worker
+  domain: payments
+  tier: 2
+  description: payment status (payments)
+  upstreams: [shared-services/audit-log-service]
+- name: iso20022-mapper-worker
+  domain: payments
+  tier: 2
+  description: iso20022 mapper (payments)
+  upstreams: []
+- name: giro-adapter
+  domain: payments
+  tier: 3
+  description: giro (payments)
+  upstreams: [payments/paynow-fast-adapter]
+- name: payment-repair-service
+  domain: payments
+  tier: 3
+  description: payment repair (payments)
+  upstreams: [shared-services/audit-log-service, payments/payments-gateway]
+- name: virtual-accounts-processor
+  domain: payments
+  tier: 2
+  description: virtual accounts (payments)
+  upstreams: [shared-services/audit-log-service, payments/swift-connector]
+- name: payment-status-batch
+  domain: payments
+  tier: 3
+  description: payment status (payments)
+  upstreams: []
+- name: chargeback-service
+  domain: payments
+  tier: 3
+  description: chargeback (payments)
+  upstreams: []
+- name: holiday-calendar-engine
+  domain: core-banking
+  tier: 2
+  description: holiday calendar (core-banking)
+  upstreams: [core-banking/core-ledger, shared-services/audit-log-service]
+- name: posting-rules-service
+  domain: core-banking
+  tier: 2
+  description: posting rules (core-banking)
+  upstreams: [core-banking/core-ledger]
+- name: account-closure-worker
+  domain: core-banking
+  tier: 2
+  description: account closure (core-banking)
+  upstreams: [core-banking/account-service]
+- name: balance-snapshot-processor
+  domain: core-banking
+  tier: 1
+  description: balance snapshot (core-banking)
+  upstreams: []
+- name: loan-servicing-service
+  domain: core-banking
+  tier: 2
+  description: loan servicing (core-banking)
+  upstreams: []
+- name: customer-master-api
+  domain: core-banking
+  tier: 3
+  description: customer master (core-banking)
+  upstreams: []
+- name: product-catalog-worker
+  domain: core-banking
+  tier: 2
+  description: product catalog (core-banking)
+  upstreams: [shared-services/audit-log-service]
+- name: term-deposits-adapter
+  domain: core-banking
+  tier: 2
+  description: term deposits (core-banking)
+  upstreams: [shared-services/audit-log-service]
+- name: gl-recon-batch
+  domain: core-banking
+  tier: 2
+  description: gl recon (core-banking)
+  upstreams: [shared-services/audit-log-service, core-banking/core-ledger]
+- name: cif-sync-service
+  domain: core-banking
+  tier: 1
+  description: cif sync (core-banking)
+  upstreams: [shared-services/auth-token-service, core-banking/account-service]
+- name: eod-batch-batch
+  domain: core-banking
+  tier: 2
+  description: eod batch (core-banking)
+  upstreams: []
+- name: fee-engine-api
+  domain: core-banking
+  tier: 3
+  description: fee engine (core-banking)
+  upstreams: []
+- name: deposits-api
+  domain: core-banking
+  tier: 1
+  description: deposits (core-banking)
+  upstreams: [core-banking/core-ledger]
+- name: statement-processor
+  domain: core-banking
+  tier: 2
+  description: statement (core-banking)
+  upstreams: [shared-services/audit-log-service]
+- name: loans-api
+  domain: core-banking
+  tier: 1
+  description: loans (core-banking)
+  upstreams: [shared-services/auth-token-service]
+- name: dormancy-engine
+  domain: core-banking
+  tier: 2
+  description: dormancy (core-banking)
+  upstreams: []
+- name: collateral-engine
+  domain: core-banking
+  tier: 2
+  description: collateral (core-banking)
+  upstreams: []
+- name: interest-accrual-processor
+  domain: core-banking
+  tier: 1
+  description: interest accrual (core-banking)
+  upstreams: []
+- name: limits-engine
+  domain: core-banking
+  tier: 3
+  description: limits (core-banking)
+  upstreams: [core-banking/account-service]
+- name: overdraft-adapter
+  domain: core-banking
+  tier: 2
+  description: overdraft (core-banking)
+  upstreams: [core-banking/account-service, shared-services/audit-log-service]
+- name: repayment-schedule-sync
+  domain: core-banking
+  tier: 3
+  description: repayment schedule (core-banking)
+  upstreams: [shared-services/audit-log-service]
+- name: account-opening-batch
+  domain: core-banking
+  tier: 1
+  description: account opening (core-banking)
+  upstreams: [shared-services/auth-token-service, core-banking/account-service]
+- name: interest-accrual-batch
+  domain: core-banking
+  tier: 2
+  description: interest accrual (core-banking)
+  upstreams: [core-banking/account-service, core-banking/core-ledger]
+- name: product-catalog-sync
+  domain: core-banking
+  tier: 2
+  description: product catalog (core-banking)
+  upstreams: []
+- name: cif-sync-sync
+  domain: core-banking
+  tier: 2
+  description: cif sync (core-banking)
+  upstreams: []
+- name: import-lc-api
+  domain: trade-finance
+  tier: 3
+  description: import lc (trade-finance)
+  upstreams: []
+- name: payables-finance-sync
+  domain: trade-finance
+  tier: 3
+  description: payables finance (trade-finance)
+  upstreams: [shared-services/audit-log-service]
+- name: trade-limits-worker
+  domain: trade-finance
+  tier: 1
+  description: trade limits (trade-finance)
+  upstreams: [shared-services/auth-token-service]
+- name: trade-compliance-adapter
+  domain: trade-finance
+  tier: 1
+  description: trade compliance (trade-finance)
+  upstreams: []
+- name: shipping-guarantee-batch
+  domain: trade-finance
+  tier: 3
+  description: shipping guarantee (trade-finance)
+  upstreams: [shared-services/auth-token-service]
+- name: vessel-check-worker
+  domain: trade-finance
+  tier: 2
+  description: vessel check (trade-finance)
+  upstreams: [shared-services/audit-log-service]
+- name: export-lc-batch
+  domain: trade-finance
+  tier: 2
+  description: export lc (trade-finance)
+  upstreams: [shared-services/audit-log-service]
+- name: bill-discounting-adapter
+  domain: trade-finance
+  tier: 2
+  description: bill discounting (trade-finance)
+  upstreams: []
+- name: trade-reporting-sync
+  domain: trade-finance
+  tier: 1
+  description: trade reporting (trade-finance)
+  upstreams: [shared-services/auth-token-service, trade-finance/lc-issuance]
+- name: invoice-finance-engine
+  domain: trade-finance
+  tier: 1
+  description: invoice finance (trade-finance)
+  upstreams: [shared-services/audit-log-service]
+- name: swift-mt7xx-adapter
+  domain: trade-finance
+  tier: 3
+  description: swift mt7xx (trade-finance)
+  upstreams: [shared-services/audit-log-service]
+- name: trade-docs-processor
+  domain: trade-finance
+  tier: 2
+  description: trade docs (trade-finance)
+  upstreams: [shared-services/audit-log-service, trade-finance/lc-issuance]
+- name: doc-checking-worker
+  domain: trade-finance
+  tier: 1
+  description: doc checking (trade-finance)
+  upstreams: [shared-services/audit-log-service]
+- name: trade-pricing-api
+  domain: trade-finance
+  tier: 1
+  description: trade pricing (trade-finance)
+  upstreams: [shared-services/audit-log-service]
+- name: bank-guarantee-service
+  domain: trade-finance
+  tier: 2
+  description: bank guarantee (trade-finance)
+  upstreams: [trade-finance/lc-issuance, shared-services/audit-log-service]
+- name: sblc-processor
+  domain: trade-finance
+  tier: 2
+  description: sblc (trade-finance)
+  upstreams: []
+- name: receivables-api
+  domain: trade-finance
+  tier: 3
+  description: receivables (trade-finance)
+  upstreams: [shared-services/audit-log-service]
+- name: trade-booking-api
+  domain: trade-finance
+  tier: 2
+  description: trade booking (trade-finance)
+  upstreams: []
+- name: trade-workflow-batch
+  domain: trade-finance
+  tier: 2
+  description: trade workflow (trade-finance)
+  upstreams: [shared-services/audit-log-service, trade-finance/lc-issuance]
+- name: forfaiting-adapter
+  domain: trade-finance
+  tier: 3
+  description: forfaiting (trade-finance)
+  upstreams: [trade-finance/lc-issuance]
+- name: documentary-collection-engine
+  domain: trade-finance
+  tier: 3
+  description: documentary collection (trade-finance)
+  upstreams: [shared-services/auth-token-service]
+- name: supply-chain-finance-worker
+  domain: trade-finance
+  tier: 1
+  description: supply chain finance (trade-finance)
+  upstreams: [shared-services/auth-token-service]
+- name: trade-limits-api
+  domain: trade-finance
+  tier: 3
+  description: trade limits (trade-finance)
+  upstreams: [shared-services/auth-token-service]
+- name: bill-discounting-batch
+  domain: trade-finance
+  tier: 1
+  description: bill discounting (trade-finance)
+  upstreams: []
+- name: trade-docs-sync
+  domain: trade-finance
+  tier: 2
+  description: trade docs (trade-finance)
+  upstreams: []
+- name: invoice-finance-worker
+  domain: trade-finance
+  tier: 3
+  description: invoice finance (trade-finance)
+  upstreams: [trade-finance/lc-issuance]
+- name: nostro-forecast-engine
+  domain: treasury-markets
+  tier: 3
+  description: nostro forecast (treasury-markets)
+  upstreams: [treasury-markets/risk-calc-engine]
+- name: deal-confirmation-adapter
+  domain: treasury-markets
+  tier: 2
+  description: deal confirmation (treasury-markets)
+  upstreams: [treasury-markets/risk-calc-engine, shared-services/auth-token-service]
+- name: liquidity-service
+  domain: treasury-markets
+  tier: 2
+  description: liquidity (treasury-markets)
+  upstreams: [treasury-markets/fx-rates, treasury-markets/risk-calc-engine]
+- name: repo-api
+  domain: treasury-markets
+  tier: 2
+  description: repo (treasury-markets)
+  upstreams: [shared-services/auth-token-service, treasury-markets/risk-calc-engine]
+- name: money-market-sync
+  domain: treasury-markets
+  tier: 2
+  description: money market (treasury-markets)
+  upstreams: [shared-services/audit-log-service]
+- name: trade-capture-worker
+  domain: treasury-markets
+  tier: 3
+  description: trade capture (treasury-markets)
+  upstreams: [treasury-markets/fx-rates]
+- name: benchmark-rates-worker
+  domain: treasury-markets
+  tier: 2
+  description: benchmark rates (treasury-markets)
+  upstreams: [treasury-markets/fx-rates]
+- name: lcr-nsfr-sync
+  domain: treasury-markets
+  tier: 3
+  description: lcr nsfr (treasury-markets)
+  upstreams: [shared-services/auth-token-service]
+- name: position-keeping-api
+  domain: treasury-markets
+  tier: 2
+  description: position keeping (treasury-markets)
+  upstreams: [treasury-markets/risk-calc-engine]
+- name: cva-sync
+  domain: treasury-markets
+  tier: 1
+  description: cva (treasury-markets)
+  upstreams: [shared-services/audit-log-service]
+- name: collateral-mgmt-batch
+  domain: treasury-markets
+  tier: 3
+  description: collateral mgmt (treasury-markets)
+  upstreams: []
+- name: fx-booking-adapter
+  domain: treasury-markets
+  tier: 2
+  description: fx booking (treasury-markets)
+  upstreams: [shared-services/audit-log-service]
+- name: alm-service
+  domain: treasury-markets
+  tier: 2
+  description: alm (treasury-markets)
+  upstreams: [treasury-markets/risk-calc-engine]
+- name: irs-pricing-sync
+  domain: treasury-markets
+  tier: 3
+  description: irs pricing (treasury-markets)
+  upstreams: []
+- name: fx-options-service
+  domain: treasury-markets
+  tier: 3
+  description: fx options (treasury-markets)
+  upstreams: []
+- name: yield-curve-batch
+  domain: treasury-markets
+  tier: 3
+  description: yield curve (treasury-markets)
+  upstreams: [treasury-markets/risk-calc-engine]
+- name: fx-pricing-worker
+  domain: treasury-markets
+  tier: 3
+  description: fx pricing (treasury-markets)
+  upstreams: [treasury-markets/fx-rates, shared-services/auth-token-service]
+- name: hedge-accounting-sync
+  domain: treasury-markets
+  tier: 2
+  description: hedge accounting (treasury-markets)
+  upstreams: []
+- name: market-data-api
+  domain: treasury-markets
+  tier: 2
+  description: market data (treasury-markets)
+  upstreams: [shared-services/auth-token-service, treasury-markets/risk-calc-engine]
+- name: pnl-worker
+  domain: treasury-markets
+  tier: 3
+  description: pnl (treasury-markets)
+  upstreams: [shared-services/audit-log-service, treasury-markets/fx-rates]
+- name: settlement-instructions-worker
+  domain: treasury-markets
+  tier: 3
+  description: settlement instructions (treasury-markets)
+  upstreams: [shared-services/audit-log-service, treasury-markets/risk-calc-engine]
+- name: limits-monitor-api
+  domain: treasury-markets
+  tier: 3
+  description: limits monitor (treasury-markets)
+  upstreams: [shared-services/audit-log-service]
+- name: cva-batch
+  domain: treasury-markets
+  tier: 3
+  description: cva (treasury-markets)
+  upstreams: [shared-services/audit-log-service]
+- name: fx-pricing-engine
+  domain: treasury-markets
+  tier: 1
+  description: fx pricing (treasury-markets)
+  upstreams: [treasury-markets/risk-calc-engine]
+- name: limits-monitor-adapter
+  domain: treasury-markets
+  tier: 2
+  description: limits monitor (treasury-markets)
+  upstreams: [treasury-markets/fx-rates]
+- name: exposure-processor
+  domain: risk-compliance
+  tier: 3
+  description: exposure (risk-compliance)
+  upstreams: [risk-compliance/fraud-screening]
+- name: transaction-monitoring-service
+  domain: risk-compliance
+  tier: 2
+  description: transaction monitoring (risk-compliance)
+  upstreams: [risk-compliance/sanctions-screening]
+- name: fraud-rules-worker
+  domain: risk-compliance
+  tier: 2
+  description: fraud rules (risk-compliance)
+  upstreams: [shared-services/auth-token-service]
+- name: alert-triage-adapter
+  domain: risk-compliance
+  tier: 2
+  description: alert triage (risk-compliance)
+  upstreams: [risk-compliance/kyc-onboarding, risk-compliance/fraud-screening]
+- name: collateral-valuation-sync
+  domain: risk-compliance
+  tier: 2
+  description: collateral valuation (risk-compliance)
+  upstreams: []
+- name: customer-risk-rating-sync
+  domain: risk-compliance
+  tier: 3
+  description: customer risk rating (risk-compliance)
+  upstreams: [risk-compliance/sanctions-screening]
+- name: adverse-media-batch
+  domain: risk-compliance
+  tier: 3
+  description: adverse media (risk-compliance)
+  upstreams: []
+- name: pep-screening-processor
+  domain: risk-compliance
+  tier: 3
+  description: pep screening (risk-compliance)
+  upstreams: [risk-compliance/sanctions-screening]
+- name: aml-monitoring-batch
+  domain: risk-compliance
+  tier: 3
+  description: aml monitoring (risk-compliance)
+  upstreams: [risk-compliance/sanctions-screening]
+- name: watchlist-sync-adapter
+  domain: risk-compliance
+  tier: 1
+  description: watchlist sync (risk-compliance)
+  upstreams: []
+- name: ifrs9-ecl-sync
+  domain: risk-compliance
+  tier: 2
+  description: ifrs9 ecl (risk-compliance)
+  upstreams: [shared-services/auth-token-service]
+- name: fatca-crs-processor
+  domain: risk-compliance
+  tier: 3
+  description: fatca crs (risk-compliance)
+  upstreams: [risk-compliance/sanctions-screening]
+- name: credit-limits-service
+  domain: risk-compliance
+  tier: 3
+  description: credit limits (risk-compliance)
+  upstreams: []
+- name: model-registry-sync
+  domain: risk-compliance
+  tier: 3
+  description: model registry (risk-compliance)
+  upstreams: [risk-compliance/kyc-onboarding]
+- name: ews-worker
+  domain: risk-compliance
+  tier: 1
+  description: ews (risk-compliance)
+  upstreams: []
+- name: case-management-sync
+  domain: risk-compliance
+  tier: 3
+  description: case management (risk-compliance)
+  upstreams: [shared-services/auth-token-service, risk-compliance/sanctions-screening]
+- name: rwa-calc-engine
+  domain: risk-compliance
+  tier: 1
+  description: rwa calc (risk-compliance)
+  upstreams: [risk-compliance/fraud-screening]
+- name: ops-risk-processor
+  domain: risk-compliance
+  tier: 3
+  description: ops risk (risk-compliance)
+  upstreams: [shared-services/audit-log-service]
+- name: str-filing-engine
+  domain: risk-compliance
+  tier: 3
+  description: str filing (risk-compliance)
+  upstreams: []
+- name: stress-testing-service
+  domain: risk-compliance
+  tier: 2
+  description: stress testing (risk-compliance)
+  upstreams: [risk-compliance/kyc-onboarding, risk-compliance/fraud-screening]
+- name: regtech-gateway-sync
+  domain: risk-compliance
+  tier: 2
+  description: regtech gateway (risk-compliance)
+  upstreams: [risk-compliance/fraud-screening]
+- name: credit-scoring-service
+  domain: risk-compliance
+  tier: 3
+  description: credit scoring (risk-compliance)
+  upstreams: [risk-compliance/fraud-screening, shared-services/auth-token-service]
+- name: fraud-rules-batch
+  domain: risk-compliance
+  tier: 3
+  description: fraud rules (risk-compliance)
+  upstreams: [risk-compliance/sanctions-screening, shared-services/auth-token-service]
+- name: regtech-gateway-api
+  domain: risk-compliance
+  tier: 1
+  description: regtech gateway (risk-compliance)
+  upstreams: [shared-services/audit-log-service]
+- name: payment-initiation-worker
+  domain: channels
+  tier: 3
+  description: payment initiation (channels)
+  upstreams: [shared-services/auth-token-service]
+- name: open-api-gateway-adapter
+  domain: channels
+  tier: 3
+  description: open api gateway (channels)
+  upstreams: [shared-services/auth-token-service]
+- name: chatbot-worker
+  domain: channels
+  tier: 2
+  description: chatbot (channels)
+  upstreams: []
+- name: access-review-adapter
+  domain: channels
+  tier: 3
+  description: access review (channels)
+  upstreams: [channels/corporate-portal-api]
+- name: mobile-token-adapter
+  domain: channels
+  tier: 3
+  description: mobile token (channels)
+  upstreams: [channels/corporate-portal-api]
+- name: session-service
+  domain: channels
+  tier: 2
+  description: session (channels)
+  upstreams: [shared-services/auth-token-service, shared-services/audit-log-service]
+- name: host-to-host-batch
+  domain: channels
+  tier: 3
+  description: host to host (channels)
+  upstreams: [shared-services/auth-token-service]
+- name: approval-workflow-api
+  domain: channels
+  tier: 2
+  description: approval workflow (channels)
+  upstreams: [shared-services/auth-token-service]
+- name: file-upload-batch
+  domain: channels
+  tier: 1
+  description: file upload (channels)
+  upstreams: [shared-services/auth-token-service]
+- name: client-onboarding-ui-sync
+  domain: channels
+  tier: 1
+  description: client onboarding ui (channels)
+  upstreams: []
+- name: portal-bff-processor
+  domain: channels
+  tier: 2
+  description: portal bff (channels)
+  upstreams: [shared-services/audit-log-service]
+- name: sftp-gateway-batch
+  domain: channels
+  tier: 3
+  description: sftp gateway (channels)
+  upstreams: [channels/corporate-portal-api, shared-services/audit-log-service]
+- name: user-entitlements-processor
+  domain: channels
+  tier: 2
+  description: user entitlements (channels)
+  upstreams: [shared-services/auth-token-service, shared-services/audit-log-service]
+- name: api-banking-processor
+  domain: channels
+  tier: 2
+  description: api banking (channels)
+  upstreams: []
+- name: notifications-inbox-processor
+  domain: channels
+  tier: 2
+  description: notifications inbox (channels)
+  upstreams: [channels/corporate-portal-api, shared-services/audit-log-service]
+- name: statements-download-service
+  domain: channels
+  tier: 2
+  description: statements download (channels)
+  upstreams: []
+- name: sso-api
+  domain: channels
+  tier: 2
+  description: sso (channels)
+  upstreams: []
+- name: alerts-adapter
+  domain: channels
+  tier: 1
+  description: alerts (channels)
+  upstreams: [channels/corporate-portal-api]
+- name: dashboard-batch
+  domain: channels
+  tier: 3
+  description: dashboard (channels)
+  upstreams: []
+- name: beneficiary-mgmt-sync
+  domain: channels
+  tier: 2
+  description: beneficiary mgmt (channels)
+  upstreams: [shared-services/audit-log-service, channels/corporate-portal-api]
+- name: document-vault-batch
+  domain: channels
+  tier: 3
+  description: document vault (channels)
+  upstreams: [shared-services/auth-token-service, shared-services/audit-log-service]
+- name: rate-display-adapter
+  domain: channels
+  tier: 2
+  description: rate display (channels)
+  upstreams: [shared-services/auth-token-service, channels/corporate-portal-api]
+- name: rate-display-worker
+  domain: channels
+  tier: 3
+  description: rate display (channels)
+  upstreams: []
+- name: dashboard-worker
+  domain: channels
+  tier: 3
+  description: dashboard (channels)
+  upstreams: [shared-services/audit-log-service]
+- name: sftp-gateway-engine
+  domain: channels
+  tier: 2
+  description: sftp gateway (channels)
+  upstreams: []
+- name: statements-download-adapter
+  domain: channels
+  tier: 1
+  description: statements download (channels)
+  upstreams: [shared-services/audit-log-service]
+- name: credit-reporting-batch
+  domain: data-reporting
+  tier: 3
+  description: credit reporting (data-reporting)
+  upstreams: [shared-services/audit-log-service]
+- name: ccar-feed-engine
+  domain: data-reporting
+  tier: 1
+  description: ccar feed (data-reporting)
+  upstreams: [shared-services/auth-token-service]
+- name: bcbs239-adapter
+  domain: data-reporting
+  tier: 2
+  description: bcbs239 (data-reporting)
+  upstreams: [shared-services/auth-token-service, data-reporting/mas-610-reporting]
+- name: data-quality-engine
+  domain: data-reporting
+  tier: 3
+  description: data quality (data-reporting)
+  upstreams: [shared-services/audit-log-service, shared-services/auth-token-service]
+- name: reference-data-api
+  domain: data-reporting
+  tier: 3
+  description: reference data (data-reporting)
+  upstreams: [shared-services/auth-token-service, shared-services/audit-log-service]
+- name: audit-extract-service
+  domain: data-reporting
+  tier: 2
+  description: audit extract (data-reporting)
+  upstreams: []
+- name: balance-sheet-engine
+  domain: data-reporting
+  tier: 3
+  description: balance sheet (data-reporting)
+  upstreams: [shared-services/auth-token-service]
+- name: risk-datamart-adapter
+  domain: data-reporting
+  tier: 3
+  description: risk datamart (data-reporting)
+  upstreams: [shared-services/audit-log-service]
+- name: mas-649-adapter
+  domain: data-reporting
+  tier: 3
+  description: mas 649 (data-reporting)
+  upstreams: []
+- name: mis-processor
+  domain: data-reporting
+  tier: 2
+  description: mis (data-reporting)
+  upstreams: [shared-services/auth-token-service]
+- name: etl-orchestrator-api
+  domain: data-reporting
+  tier: 2
+  description: etl orchestrator (data-reporting)
+  upstreams: [shared-services/audit-log-service, data-reporting/mas-610-reporting]
+- name: golden-source-processor
+  domain: data-reporting
+  tier: 3
+  description: golden source (data-reporting)
+  upstreams: [shared-services/auth-token-service, data-reporting/mas-610-reporting]
+- name: liquidity-reporting-adapter
+  domain: data-reporting
+  tier: 1
+  description: liquidity reporting (data-reporting)
+  upstreams: [shared-services/audit-log-service]
+- name: finrep-sync
+  domain: data-reporting
+  tier: 3
+  description: finrep (data-reporting)
+  upstreams: [data-reporting/mas-610-reporting, shared-services/audit-log-service]
+- name: tax-reporting-adapter
+  domain: data-reporting
+  tier: 2
+  description: tax reporting (data-reporting)
+  upstreams: [shared-services/auth-token-service]
+- name: lineage-processor
+  domain: data-reporting
+  tier: 2
+  description: lineage (data-reporting)
+  upstreams: [data-reporting/mas-610-reporting, shared-services/audit-log-service]
+- name: data-catalog-processor
+  domain: data-reporting
+  tier: 3
+  description: data catalog (data-reporting)
+  upstreams: [shared-services/audit-log-service]
+- name: xbrl-generator-api
+  domain: data-reporting
+  tier: 1
+  description: xbrl generator (data-reporting)
+  upstreams: []
+- name: report-scheduler-service
+  domain: data-reporting
+  tier: 2
+  description: report scheduler (data-reporting)
+  upstreams: []
+- name: mas-637-sync
+  domain: data-reporting
+  tier: 2
+  description: mas 637 (data-reporting)
+  upstreams: []
+- name: large-exposures-worker
+  domain: data-reporting
+  tier: 2
+  description: large exposures (data-reporting)
+  upstreams: []
+- name: regulatory-datamart-adapter
+  domain: data-reporting
+  tier: 3
+  description: regulatory datamart (data-reporting)
+  upstreams: [shared-services/auth-token-service]
+- name: credit-reporting-processor
+  domain: data-reporting
+  tier: 3
+  description: credit reporting (data-reporting)
+  upstreams: [shared-services/audit-log-service]
+- name: bcbs239-processor
+  domain: data-reporting
+  tier: 3
+  description: bcbs239 (data-reporting)
+  upstreams: [shared-services/auth-token-service, shared-services/audit-log-service]
+- name: risk-datamart-worker
+  domain: data-reporting
+  tier: 2
+  description: risk datamart (data-reporting)
+  upstreams: [shared-services/auth-token-service]
+- name: regulatory-datamart-worker
+  domain: data-reporting
+  tier: 1
+  description: regulatory datamart (data-reporting)
+  upstreams: [data-reporting/mas-610-reporting]
+- name: ldap-sync-processor
+  domain: shared-services
+  tier: 3
+  description: ldap sync (shared-services)
+  upstreams: []
+- name: secrets-broker-worker
+  domain: shared-services
+  tier: 2
+  description: secrets broker (shared-services)
+  upstreams: [shared-services/notification-service]
+- name: doc-archive-batch
+  domain: shared-services
+  tier: 3
+  description: doc archive (shared-services)
+  upstreams: [shared-services/auth-token-service, shared-services/notification-service]
+- name: calendar-batch
+  domain: shared-services
+  tier: 3
+  description: calendar (shared-services)
+  upstreams: [shared-services/notification-service, shared-services/auth-token-service]
+- name: signature-sync
+  domain: shared-services
+  tier: 3
+  description: signature (shared-services)
+  upstreams: []
+- name: email-relay-batch
+  domain: shared-services
+  tier: 3
+  description: email relay (shared-services)
+  upstreams: [shared-services/notification-service]
+- name: log-shipper-sync
+  domain: shared-services
+  tier: 3
+  description: log shipper (shared-services)
+  upstreams: []
+- name: event-bus-bridge-service
+  domain: shared-services
+  tier: 2
+  description: event bus bridge (shared-services)
+  upstreams: []
+- name: pdf-renderer-worker
+  domain: shared-services
+  tier: 3
+  description: pdf renderer (shared-services)
+  upstreams: []
+- name: fx-reference-processor
+  domain: shared-services
+  tier: 2
+  description: fx reference (shared-services)
+  upstreams: [shared-services/auth-token-service]
+- name: cert-renewal-sync
+  domain: shared-services
+  tier: 1
+  description: cert renewal (shared-services)
+  upstreams: []
+- name: rate-limiter-sync
+  domain: shared-services
+  tier: 2
+  description: rate limiter (shared-services)
+  upstreams: [shared-services/auth-token-service]
+- name: file-transfer-engine
+  domain: shared-services
+  tier: 1
+  description: file transfer (shared-services)
+  upstreams: [shared-services/audit-log-service]
+- name: sms-gateway-processor
+  domain: shared-services
+  tier: 1
+  description: sms gateway (shared-services)
+  upstreams: []
+- name: feature-flags-service
+  domain: shared-services
+  tier: 3
+  description: feature flags (shared-services)
+  upstreams: [shared-services/audit-log-service]
+- name: bic-directory-engine
+  domain: shared-services
+  tier: 2
+  description: bic directory (shared-services)
+  upstreams: [shared-services/audit-log-service]
+- name: iam-provisioning-worker
+  domain: shared-services
+  tier: 2
+  description: iam provisioning (shared-services)
+  upstreams: [shared-services/auth-token-service]
+- name: cmdb-sync-api
+  domain: shared-services
+  tier: 2
+  description: cmdb sync (shared-services)
+  upstreams: []
+- name: id-generator-processor
+  domain: shared-services
+  tier: 3
+  description: id generator (shared-services)
+  upstreams: [shared-services/notification-service, shared-services/audit-log-service]
+- name: job-scheduler-api
+  domain: shared-services
+  tier: 1
+  description: job scheduler (shared-services)
+  upstreams: [shared-services/audit-log-service]
+- name: config-service-processor
+  domain: shared-services
+  tier: 2
+  description: config service (shared-services)
+  upstreams: [shared-services/notification-service, shared-services/auth-token-service]
+- name: country-codes-service
+  domain: shared-services
+  tier: 3
+  description: country codes (shared-services)
+  upstreams: [shared-services/auth-token-service]
+- name: signature-processor
+  domain: shared-services
+  tier: 3
+  description: signature (shared-services)
+  upstreams: []
+- name: sms-gateway-worker
+  domain: shared-services
+  tier: 2
+  description: sms gateway (shared-services)
+  upstreams: [shared-services/audit-log-service]
