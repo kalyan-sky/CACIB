@@ -6,7 +6,7 @@ python3 tools/platform.py audit --live | tee audit-evidence-$(date +%F).txt
 #   [C03] data-reporting/deployment/mas-610-reporting: container app: privileged: true
 #   [C03] ... runs as UID 0, root filesystem writable, allowPrivilegeEscalation not false ...
 #   [C01] ... missing limits.cpu / limits.memory
-#   [C04] ... image bank-sim/txn-service:latest not pinned to a version
+#   [C04] ... image .../txn-service:latest not pinned to a version
 #   [C07] data-reporting/namespace/data-reporting: Pod Security Admission not enforcing 'restricted'
 ```
 

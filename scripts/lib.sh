@@ -2,12 +2,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SIM_STATE="$ROOT/.sim-state"
 CLUSTER="${CLUSTER:-bank-sim}"
-KUBE_CONTEXT="${KUBE_CONTEXT:-kind-$CLUSTER}"
-IMAGE="${IMAGE:-bank-sim/txn-service:1.4.0}"
+# setup.sh (kind) and eks-up.sh record which cluster and image this checkout
+# drives; environment variables override them.
+KUBE_CONTEXT="${KUBE_CONTEXT:-$(cat "$SIM_STATE/context" 2>/dev/null || echo "kind-$CLUSTER")}"
+IMAGE="${IMAGE:-$(cat "$SIM_STATE/image" 2>/dev/null || echo bank-sim/txn-service:1.4.0)}"
+export KUBE_CONTEXT IMAGE
 PY="${PYTHON:-python3}"
 RENDERED="$ROOT/rendered"
-SIM_STATE="$ROOT/.sim-state"
 FAILED=0
 
 if [ -t 1 ]; then
@@ -60,6 +63,7 @@ check_result() {
 }
 
 require_cluster() {
-  k get --raw /readyz >/dev/null 2>&1 || die "cluster context '$KUBE_CONTEXT' not reachable - run 'make up' first"
+  k get --raw /readyz >/dev/null 2>&1 ||
+    die "cluster context '$KUBE_CONTEXT' not reachable - run 'make up' (kind) or 'make eks-up' (EKS) first"
   [ -d "$RENDERED" ] || die "rendered/ missing - run 'make render apply'"
 }

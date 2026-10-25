@@ -38,3 +38,12 @@ git (GitOps would revert it).
   `topologySpreadConstraints`, so a whole zone can be out without an outage.
 - Automate it: kured (reboot daemon), or a pipeline that drains, patches,
   verifies and uncordons, with evidence for the change record.
+
+## On EKS
+With managed node groups you don't patch nodes in place. You roll out a new AMI:
+`eksctl upgrade nodegroup --cluster bank-sim --name workers --region ap-southeast-1`
+(or a new launch template version). EKS adds a surge node, then cordons and
+drains the old nodes one by one. It **honours the same PDBs**: with this
+broken PDB the upgrade fails with `PodEvictionFailure` instead of hanging, so
+the fix is identical. Karpenter "drift" and `expireAfter` do the same thing
+continuously.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Create the local "private cloud": kind cluster, zone labels, platform RBAC,
-# the shared application image, and every application from the inventory.
+# Create the local "private cloud": kind cluster, zone labels and the shared
+# application image, then deploy every application (scripts/deploy.sh).
+# For AWS instead of a laptop, see scripts/eks-up.sh.
 #
 #   PROFILE=lite|full   how many of the 216 apps to deploy (default lite, ~56 apps)
 #   CNI=kindnet|calico  kindnet (kind >= 0.25) enforces NetworkPolicy natively
@@ -8,6 +9,10 @@ source "$(dirname "$0")/lib.sh"
 
 PROFILE="${PROFILE:-lite}"
 CNI="${CNI:-kindnet}"
+# Always target the kind cluster, even if this checkout last drove EKS.
+KUBE_CONTEXT="kind-$CLUSTER"
+IMAGE="bank-sim/txn-service:1.4.0"
+export KUBE_CONTEXT IMAGE
 
 need docker  "install Docker Desktop / Docker Engine"
 need kind    "https://kind.sigs.k8s.io/docs/user/quick-start/#installation"
@@ -57,30 +62,4 @@ info "Building application image $IMAGE"
 docker build -q -t "$IMAGE" -t "${IMAGE%:*}:latest" "$ROOT/apps/txn-service" >/dev/null
 kind load docker-image --name "$CLUSTER" "$IMAGE" "${IMAGE%:*}:latest" >/dev/null
 
-info "Applying cluster RBAC"
-k apply -f "$ROOT/platform/cluster-rbac.yaml" >/dev/null
-
-mkdir -p "$SIM_STATE"
-echo "$PROFILE" >"$SIM_STATE/profile"
-
-info "Rendering inventory (profile=$PROFILE)"
-"$PY" "$ROOT/tools/platform.py" render --profile "$PROFILE" --image "$IMAGE"
-
-info "Deploying applications"
-k apply -R -f "$RENDERED" >/dev/null
-
-info "Waiting for all deployments to become available (this can take a few minutes)"
-for ns in $(ls "$RENDERED"); do
-  k -n "$ns" wait deploy --all --for=condition=Available --timeout=600s >/dev/null ||
-    warn "some deployments in $ns are not available yet"
-done
-
-echo
-k get nodes -L topology.kubernetes.io/zone
-echo
-info "Bank simulation is up. Next steps:"
-cat <<MSG
-    ./sim.sh status        estate health + customer-facing SLOs
-    ./sim.sh dashboard     live service-health page on http://localhost:8080
-    ./sim.sh list          incident / change tickets to work through
-MSG
+PROFILE="$PROFILE" "$ROOT/scripts/deploy.sh"

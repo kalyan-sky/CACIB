@@ -1,0 +1,45 @@
+# EKS version of the bank's "private cloud", rendered by scripts/eks-up.sh
+# (__PLACEHOLDERS__ are filled in from environment variables).
+#
+# - 3 worker nodes, one per availability zone of the Singapore region
+#   (ap-southeast-1a/b/c); EKS labels them topology.kubernetes.io/zone, so the
+#   tier-1 zone spread works for real.
+# - VPC CNI with NetworkPolicy enforcement (the scenarios rely on it) and
+#   prefix delegation, so a small node can run 110 pods instead of ~17.
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: __CLUSTER__
+  region: __REGION__
+  version: "__K8S_VERSION__"
+  tags:
+    project: bank-sim
+    purpose: training-lab
+availabilityZones: ["__REGION__a", "__REGION__b", "__REGION__c"]
+iam:
+  withOIDC: true
+vpc:
+  nat:
+    gateway: __NAT__          # Disable = cheapest (nodes in public subnets); Single = private nodes
+addons:
+  - name: vpc-cni
+    version: latest
+    configurationValues: |-
+      {"enableNetworkPolicy": "true", "env": {"ENABLE_PREFIX_DELEGATION": "true", "WARM_PREFIX_TARGET": "1"}}
+  - name: kube-proxy
+    version: latest
+  - name: coredns
+    version: latest
+managedNodeGroups:
+  - name: workers
+    instanceType: __INSTANCE_TYPE__
+    desiredCapacity: 3
+    minSize: 3
+    maxSize: 4               # room for one surge node during upgrades
+    maxPodsPerNode: 110
+    volumeSize: 30
+    privateNetworking: __PRIVATE__
+    labels:
+      bank.sim/datacentre: aws-__REGION__
+    tags:
+      project: bank-sim

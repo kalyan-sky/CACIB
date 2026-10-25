@@ -52,6 +52,17 @@ make up                 # cluster + image + 56 apps (lite profile), ~5 minutes
 `make up PROFILE=full` deploys all **216 apps / ~260 pods**. Give Docker 8 GB+ and 4 CPUs.
 If your kind version does not enforce NetworkPolicy, use `CNI=calico make up`.
 
+### Or on Amazon EKS (Singapore region)
+
+```bash
+aws configure                      # credentials for an account you can create EKS in
+make eks-up                        # ~20 min: EKS across 3 AZs + ECR + the bank (~$0.30/hour)
+./sim.sh status                    # everything else works the same
+make eks-down                      # delete it all when you finish
+```
+
+Full guide, costs and troubleshooting: [`docs/eks.md`](docs/eks.md).
+
 ## A day in the life
 
 ### Morning checks
@@ -122,9 +133,9 @@ make apply
 inventory/applications.yaml   the 216-app CMDB (source of truth)
 tools/platform.py             render | audit | capacity | inventory | status | restore
 apps/txn-service/             Go service used by every app (serve | loadgen | probe)
-platform/                     kind cluster definition, cluster RBAC
+platform/                     kind and EKS (eksctl) cluster definitions, cluster RBAC
 scenarios/NN-*/               ticket.md, hints.md, solution.md, break.sh, check.sh, reset.sh
-scripts/                      setup, teardown, shared shell helpers
+scripts/                      setup (kind), eks-up / eks-down, deploy, shared shell helpers
 docs/                         architecture, triage cheat-sheet, interview notes
 sim.sh                        the ticket simulator
 ```
@@ -140,5 +151,5 @@ Ideas that map to a real private-cloud platform roadmap:
 - **Upgrades**: rebuild the cluster on a newer `kindest/node` image node by node (the same skills as scenario 07).
 - **Autoscaling**: metrics-server + HPA for month-end batch peaks.
 
-See [`docs/architecture.md`](docs/architecture.md), [`docs/triage-cheatsheet.md`](docs/triage-cheatsheet.md)
+See [`docs/eks.md`](docs/eks.md), [`docs/architecture.md`](docs/architecture.md), [`docs/triage-cheatsheet.md`](docs/triage-cheatsheet.md)
 and [`docs/interview-notes.md`](docs/interview-notes.md).

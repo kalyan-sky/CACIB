@@ -34,7 +34,9 @@ except ImportError:
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INVENTORY = os.path.join(ROOT, "inventory", "applications.yaml")
 DEFAULT_IMAGE = "bank-sim/txn-service:1.4.0"
-APPROVED_REGISTRIES = ("bank-sim/", "registry.bank.local/")
+# Local images (kind), the bank's internal registry, or Amazon ECR (EKS).
+APPROVED_REGISTRY = re.compile(r"^(bank-sim/|registry\.bank\.local/|\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/)")
+SIM_STATE = os.path.join(ROOT, ".sim-state")
 LITE_FILLERS_PER_DOMAIN = 5
 TRAFFIC_NS = "sim-traffic"
 ZONE_KEY = "topology.kubernetes.io/zone"
@@ -125,6 +127,28 @@ def requests_for(app):
 def svc_url(ref):
     ns, name = ref.split("/", 1)
     return f"http://{name}.{ns}.svc.cluster.local:8080"
+
+
+# ------------------------------------------------------------------ cluster access
+
+
+def kube_context():
+    """Same resolution as scripts/lib.sh: $KUBE_CONTEXT, then the context
+    recorded by setup.sh / eks-up.sh, then the default kind cluster."""
+    return os.environ.get("KUBE_CONTEXT") or recorded("context", "kind-" + os.environ.get("CLUSTER", "bank-sim"))
+
+
+def recorded(name, default):
+    """A value setup.sh / eks-up.sh saved in .sim-state/ (profile, image, context)."""
+    try:
+        with open(os.path.join(SIM_STATE, name)) as f:
+            return f.read().strip() or default
+    except OSError:
+        return default
+
+
+def kubectl(*args):
+    return ["kubectl", "--context", kube_context(), *args]
 
 
 # ------------------------------------------------------------------ render
@@ -378,7 +402,7 @@ def load_objects(args):
     if args.live:
         objs = []
         for kind in ["namespaces", "deployments", "poddisruptionbudgets", "networkpolicies", "resourcequotas"]:
-            cmd = ["kubectl", "get", kind, "-o", "json"] + ([] if kind == "namespaces" else ["-A"])
+            cmd = kubectl("get", kind, "-o", "json") + ([] if kind == "namespaces" else ["-A"])
             out = subprocess.run(cmd, capture_output=True, text=True)
             if out.returncode:
                 sys.exit(f"kubectl get {kind} failed: {out.stderr.strip()}")
@@ -432,7 +456,7 @@ def audit_deployment(dep, pdbs):
         if not sc.get("readOnlyRootFilesystem"):
             add("C03", f"container {cn}: root filesystem writable")
         img = c.get("image", "")
-        if not img.startswith(APPROVED_REGISTRIES):
+        if not APPROVED_REGISTRY.match(img):
             add("C04", f"container {cn}: image {img} not from approved registry")
         if ":" not in img.rsplit("/", 1)[-1] or img.endswith(":latest"):
             add("C04", f"container {cn}: image {img} not pinned to a version")
@@ -510,7 +534,7 @@ def cmd_capacity(args):
     usage = defaultdict(lambda: {"pods": 0, "cpu": 0, "mem": 0, "apps": 0})
     quotas = {}
     if args.live:
-        pods = json.loads(subprocess.run(["kubectl", "get", "pods", "-A", "-o", "json"],
+        pods = json.loads(subprocess.run(kubectl("get", "pods", "-A", "-o", "json"),
                                          capture_output=True, text=True, check=True).stdout)["items"]
         for p in pods:
             ns = p["metadata"]["namespace"]
@@ -522,7 +546,7 @@ def cmd_capacity(args):
                 r = c.get("resources", {}).get("requests", {})
                 u["cpu"] += cpu_m(r.get("cpu", "0m"))
                 u["mem"] += mem_mi(r.get("memory", "0Mi"))
-        rq = json.loads(subprocess.run(["kubectl", "get", "resourcequota", "-A", "-o", "json"],
+        rq = json.loads(subprocess.run(kubectl("get", "resourcequota", "-A", "-o", "json"),
                                        capture_output=True, text=True, check=True).stdout)["items"]
         objs = rq
     for o in objs:
@@ -590,7 +614,7 @@ def cmd_inventory(args):
 # ------------------------------------------------------------------ restore
 
 
-def restore_object(ctx, obj):
+def restore_object(obj):
     """Make one live object identical to its rendered form.
 
     `replace` discards any drift (extra env vars, patched fields) that a
@@ -598,7 +622,7 @@ def restore_object(ctx, obj):
     created. Services are applied instead, because a replace would have to
     carry the allocated clusterIP.
     """
-    kube = ["kubectl", "--context", ctx]
+    kube = kubectl()
     body = json.dumps(obj)
     what = f"{obj['kind']}/{obj['metadata']['name']}"
     verb = ["apply", "-f", "-"] if obj["kind"] == "Service" else ["replace", "--save-config", "-f", "-"]
@@ -615,7 +639,6 @@ def restore_object(ctx, obj):
 
 
 def cmd_restore(args):
-    ctx = os.environ.get("KUBE_CONTEXT", "kind-" + os.environ.get("CLUSTER", "bank-sim"))
     for ref in args.refs:
         ns, _, app = ref.partition("/")
         path = os.path.join(args.path, ns, f"{app}.yaml" if app else "00-namespace.yaml")
@@ -624,7 +647,7 @@ def cmd_restore(args):
         with open(path) as f:
             docs = [d for d in yaml.safe_load_all(f) if d]
         for d in docs:
-            restore_object(ctx, d)
+            restore_object(d)
         print(f"restored {ref} ({len(docs)} objects)")
 
 
@@ -632,9 +655,8 @@ def cmd_restore(args):
 
 
 def kget(*args):
-    ctx = os.environ.get("KUBE_CONTEXT", "kind-" + os.environ.get("CLUSTER", "bank-sim"))
     try:
-        out = subprocess.run(["kubectl", "--context", ctx, *args], capture_output=True, text=True)
+        out = subprocess.run(kubectl(*args), capture_output=True, text=True)
     except FileNotFoundError:
         raise RuntimeError("kubectl not found on PATH")
     if out.returncode:
@@ -669,6 +691,7 @@ def cmd_status(args):
         sys.exit(f"cannot reach cluster: {e}")
 
     print("NODES")
+    width = max([len(n["metadata"]["name"]) for n in nodes] + [20]) + 2
     for n in nodes:
         ready = next((c["status"] for c in n["status"]["conditions"] if c["type"] == "Ready"), "?")
         flags = []
@@ -677,7 +700,7 @@ def cmd_status(args):
         if n["spec"].get("unschedulable"):
             flags.append("Cordoned")
         zone = n["metadata"]["labels"].get(ZONE_KEY, "-")
-        print(f"  {n['metadata']['name']:<28}{zone:<12}{', '.join(flags) or 'Ready'}")
+        print(f"  {n['metadata']['name']:<{width}}{zone:<18}{', '.join(flags) or 'Ready'}")
 
     bank = [d for d in deps if d["metadata"]["namespace"] not in SKIP_NS | {"default"}]
     unhealthy = []
@@ -725,9 +748,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("render", help="generate manifests from the inventory")
-    r.add_argument("--profile", choices=["lite", "full"], default=os.environ.get("PROFILE", "lite"))
+    r.add_argument("--profile", choices=["lite", "full"], default=os.environ.get("PROFILE") or recorded("profile", "lite"))
     r.add_argument("--out", default=os.path.join(ROOT, "rendered"))
-    r.add_argument("--image", default=DEFAULT_IMAGE)
+    r.add_argument("--image", default=recorded("image", DEFAULT_IMAGE),
+                   help="default: the image recorded by setup.sh / eks-up.sh")
     for name in ("audit", "capacity"):
         a = sub.add_parser(name)
         src = a.add_mutually_exclusive_group()
