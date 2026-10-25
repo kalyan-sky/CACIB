@@ -40,6 +40,29 @@ The audit accepts ECR as an approved registry.
   aws sts get-caller-identity
   ```
 
+### Using AWS CloudShell instead of your laptop
+
+[CloudShell](https://console.aws.amazon.com/cloudshell) (the `>_` icon in the AWS console) is already
+logged in to your account and needs no `aws configure`. It runs Amazon Linux, so use `dnf`, not `apt`.
+It has **no Docker**: `eks-up.sh` notices this, compiles the image with Go and pushes it to ECR with
+[crane](https://github.com/google/go-containerregistry/tree/main/cmd/crane).
+
+```bash
+# tools go into ~/bin because only your home directory survives between CloudShell sessions
+mkdir -p ~/bin && grep -q 'HOME/bin' ~/.bashrc || echo 'export PATH=$HOME/bin:$PATH' >> ~/.bashrc
+export PATH=$HOME/bin:$PATH
+curl -sSL "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz" | tar xz -C ~/bin
+curl -sSL -o ~/bin/kubectl "https://dl.k8s.io/release/$(curl -sSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x ~/bin/kubectl
+sudo dnf install -y golang make git        # Go builds the image; reinstall after a new session
+pip3 install --user pyyaml
+```
+
+CloudShell ends a session after ~20-30 minutes **without keyboard input**, and cluster creation takes
+about that long. Press a key now and then while `make eks-up` runs. If the session drops anyway,
+open a new one, re-run the setup lines above, and run `make eks-up` again. It reuses the cluster and
+creates whatever is missing (for example the node group).
+
 ## 2. Cost (rough, on-demand, ap-southeast-1)
 
 | Item | Approx. per hour |
