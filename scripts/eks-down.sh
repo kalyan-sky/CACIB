@@ -26,16 +26,19 @@ if ! eksctl delete cluster --name "$CLUSTER" --region "$REGION" --wait; then
     UPDATE_ROLLBACK_COMPLETE DELETE_FAILED \
     --query "StackSummaries[?starts_with(StackName, 'eksctl-$CLUSTER-')].StackName" --output text)
   [ -n "$stacks" ] || die "no eksctl-$CLUSTER-* stacks found in $REGION - check the CloudFormation console"
+  delete_stack() {
+    info "  deleting stack $1${2:+ ($2)}"
+    # eksctl enables termination protection on its stacks; it lifts it itself, we must too
+    aws cloudformation update-termination-protection --no-enable-termination-protection \
+      --stack-name "$1" --region "$REGION" >/dev/null
+    aws cloudformation delete-stack --stack-name "$1" --region "$REGION"
+    aws cloudformation wait stack-delete-complete --stack-name "$1" --region "$REGION"
+  }
   for stack in $stacks; do
-    [ "$stack" = "eksctl-$CLUSTER-cluster" ] && continue
-    info "  deleting stack $stack"
-    aws cloudformation delete-stack --stack-name "$stack" --region "$REGION"
-    aws cloudformation wait stack-delete-complete --stack-name "$stack" --region "$REGION"
+    [ "$stack" = "eksctl-$CLUSTER-cluster" ] || delete_stack "$stack"
   done
   if grep -qw "eksctl-$CLUSTER-cluster" <<<"$stacks"; then
-    info "  deleting stack eksctl-$CLUSTER-cluster (control plane, VPC, IAM roles)"
-    aws cloudformation delete-stack --stack-name "eksctl-$CLUSTER-cluster" --region "$REGION"
-    aws cloudformation wait stack-delete-complete --stack-name "eksctl-$CLUSTER-cluster" --region "$REGION"
+    delete_stack "eksctl-$CLUSTER-cluster" "control plane, VPC, IAM roles"
   fi
 fi
 info "Deleting ECR repository $REPO"
