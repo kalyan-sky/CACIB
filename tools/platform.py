@@ -33,7 +33,7 @@ except ImportError:
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INVENTORY = os.path.join(ROOT, "inventory", "applications.yaml")
-DEFAULT_IMAGE = "bank-sim/txn-service:1.4.0"
+DEFAULT_IMAGE = "bank-sim/txn-service:1.5.0"
 # Local images (kind), the bank's internal registry, or Amazon ECR (EKS).
 APPROVED_REGISTRY = re.compile(r"^(bank-sim/|registry\.bank\.local/|\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/)")
 SIM_STATE = os.path.join(ROOT, ".sim-state")
@@ -344,6 +344,52 @@ def render_traffic(edge_apps, image):
     ]
 
 
+# The corporate e-banking portal (web tier) and the edge services it calls.
+PORTAL_BACKENDS = {
+    "ACCOUNTS_URL": "channels/corporate-portal-api",
+    "PAYMENTS_URL": "payments/payments-gateway",
+    "PAYNOW_URL": "payments/paynow-fast-adapter",
+    "TRADE_URL": "trade-finance/lc-issuance",
+    "KYC_URL": "risk-compliance/kyc-onboarding",
+}
+
+
+def render_portal(image):
+    """bank-portal: UI + backend-for-frontend, in the traffic (web) tier.
+
+    It keeps demo client state in memory, so it runs as a single replica; a
+    real portal would keep sessions and state in a database or cache.
+    """
+    labels = {"app.kubernetes.io/name": "bank-portal", "app.kubernetes.io/managed-by": "bank-platform",
+              "app.kubernetes.io/part-of": "channels"}
+    return [
+        {"apiVersion": "apps/v1", "kind": "Deployment",
+         "metadata": {"name": "bank-portal", "namespace": TRAFFIC_NS, "labels": labels},
+         "spec": {"replicas": 1, "selector": {"matchLabels": {"app.kubernetes.io/name": "bank-portal"}},
+                  "strategy": {"type": "Recreate"},  # single in-memory instance
+                  "template": {"metadata": {"labels": labels}, "spec": {
+                      "automountServiceAccountToken": False,
+                      "securityContext": {"runAsNonRoot": True, "runAsUser": 10001,
+                                          "seccompProfile": {"type": "RuntimeDefault"}},
+                      "containers": [{
+                          "name": "portal", "image": image, "imagePullPolicy": "IfNotPresent",
+                          "args": ["portal"],
+                          "env": [{"name": k, "value": svc_url(v)} for k, v in PORTAL_BACKENDS.items()],
+                          "ports": [{"name": "http", "containerPort": 8080}],
+                          "resources": {"requests": {"cpu": "20m", "memory": "32Mi"},
+                                        "limits": {"cpu": "300m", "memory": "128Mi"}},
+                          "readinessProbe": {"httpGet": {"path": "/readyz", "port": "http"}},
+                          "livenessProbe": {"httpGet": {"path": "/healthz", "port": "http"}},
+                          "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
+                                              "capabilities": {"drop": ["ALL"]}},
+                      }]}}}},
+        {"apiVersion": "v1", "kind": "Service",
+         "metadata": {"name": "bank-portal", "namespace": TRAFFIC_NS, "labels": labels},
+         "spec": {"selector": {"app.kubernetes.io/name": "bank-portal"},
+                  "ports": [{"name": "http", "port": 8080, "targetPort": "http"}]}},
+    ]
+
+
 def display_path(path):
     path = os.path.abspath(path)
     return os.path.relpath(path, ROOT) if path.startswith(ROOT + os.sep) else path
@@ -378,6 +424,7 @@ def cmd_render(args):
     os.makedirs(os.path.join(args.out, TRAFFIC_NS))
     write_yaml(os.path.join(args.out, TRAFFIC_NS, "traffic-simulator.yaml"),
                render_traffic([a for a in apps if a.get("exposure") == "edge"], args.image))
+    write_yaml(os.path.join(args.out, TRAFFIC_NS, "bank-portal.yaml"), render_portal(args.image))
     pods = sum(replicas_for(a) for a in apps)
     print(f"rendered profile={args.profile}: {len(apps)} applications, {pods} pods, "
           f"{len(by_ns)} namespaces -> {display_path(args.out)}/")

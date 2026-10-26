@@ -39,7 +39,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: app
-          image: bank-sim/txn-service:1.4.0
+          image: bank-sim/txn-service:1.5.0
           imagePullPolicy: IfNotPresent
           env:
             - {name: APP_NAME, value: trade-docs-ocr}

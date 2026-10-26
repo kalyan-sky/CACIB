@@ -11,6 +11,7 @@
 #   ./sim.sh reset <id>           restore the affected apps to their baseline
 #   ./sim.sh status               estate health and customer-facing SLOs
 #   ./sim.sh dashboard            port-forward the service-health page to localhost:8080
+#   ./sim.sh portal               port-forward the corporate banking portal to localhost:8081
 source "$(dirname "$0")/scripts/lib.sh"
 
 STATE="$SIM_STATE"
@@ -137,6 +138,12 @@ cmd_dashboard() {
   k -n sim-traffic port-forward svc/traffic-simulator "${PORT:-8080}:8080"
 }
 
+cmd_portal() {
+  require_cluster
+  info "Corporate banking portal on http://localhost:${PORT:-8081}  (Ctrl-C to stop)"
+  k -n sim-traffic port-forward svc/bank-portal "${PORT:-8081}:8080"
+}
+
 case "${1:-help}" in
   list | ls) cmd_list ;;
   start) cmd_start "${2:-}" ;;
@@ -148,5 +155,6 @@ case "${1:-help}" in
   reset) cmd_reset "${2:-}" ;;
   status) require_cluster && "$PY" "$ROOT/tools/platform.py" status ;;
   dashboard) cmd_dashboard ;;
+  portal) cmd_portal ;;
   *) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" ;;
 esac

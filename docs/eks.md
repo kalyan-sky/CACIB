@@ -97,7 +97,7 @@ AWS_REGION=ap-southeast-3 make eks-up             # another region (needs a, b a
    prefix delegation, and a managed node group of 3 nodes (`maxPodsPerNode: 110`).
 3. Adds the kubectl context `eks-bank-sim` and checks pod capacity and the network-policy agent.
 4. Creates the ECR repository `bank-sim/txn-service` (scan on push). It builds the image for `linux/amd64`
-   (which works from Apple Silicon too) and pushes `:1.4.0` and `:latest`.
+   (which works from Apple Silicon too) and pushes `:1.5.0` and `:latest`.
 5. Runs `scripts/deploy.sh`: cluster RBAC, render with the ECR image, apply, wait for every deployment.
 
 The context and image are saved in `.sim-state/`. After that, `./sim.sh`, `make audit`,
@@ -122,9 +122,17 @@ Extra EKS drills:
 - **Scenario 07 for real:** after fixing the PDB, run
   `eksctl upgrade nodegroup --cluster bank-sim --name workers --region ap-southeast-1`.
   With the broken PDB the upgrade fails with `PodEvictionFailure`. That is the same lesson at cloud scale.
-- **ECR:** `aws ecr describe-image-scan-findings --repository-name bank-sim/txn-service --image-id imageTag=1.4.0 --region ap-southeast-1`
+- **ECR:** `aws ecr describe-image-scan-findings --repository-name bank-sim/txn-service --image-id imageTag=1.5.0 --region ap-southeast-1`
 - **Who am I in the cluster?** `kubectl auth whoami` and `aws eks list-access-entries --cluster-name bank-sim --region ap-southeast-1`
   (how AWS IAM maps to Kubernetes RBAC).
+
+## 4b. Open the bank portal through AWS Lambda
+
+```bash
+make eks-deploy                     # after pulling new code: rebuild the image, roll out the apps
+make portal-lambda IP=<your-ip>     # your IP: open https://checkip.amazonaws.com in your browser
+```
+It prints a `https://….lambda-url.<region>.on.aws/` link. Details and architecture: [bank-portal.md](bank-portal.md).
 
 ## 5. Delete everything
 

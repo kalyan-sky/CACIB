@@ -6,6 +6,7 @@
 //
 //	txn-service                 serve: an HTTP "banking" microservice (default)
 //	txn-service loadgen         traffic simulator that drives the edge apps
+//	txn-service portal          corporate e-banking web portal (UI + BFF API)
 //	txn-service probe <url>     tiny HTTP client for scratch images (exit 0/1)
 //
 // Behaviour is controlled entirely through environment variables so that
@@ -31,7 +32,7 @@ import (
 	"time"
 )
 
-var version = "1.4.0"
+var version = "1.5.0"
 
 func main() {
 	log.SetFlags(0)
@@ -46,12 +47,14 @@ func main() {
 		serve()
 	case "loadgen":
 		loadgen()
+	case "portal":
+		servePortal()
 	case "probe":
 		os.Exit(probe(os.Args[2:]))
 	case "version":
 		fmt.Println(version)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown mode %q (serve|loadgen|probe|version)\n", mode)
+		fmt.Fprintf(os.Stderr, "unknown mode %q (serve|loadgen|portal|probe|version)\n", mode)
 		os.Exit(2)
 	}
 }

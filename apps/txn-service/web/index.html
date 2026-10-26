@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BankSim Corporate Banking</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b3b60'/%3E%3Cpath d='M8 12l8-5 8 5v2H8zM10 15h2.5v7H10zM14.75 15h2.5v7h-2.5zM19.5 15H22v7h-2.5zM8 23h16v2H8z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <!-- Sign-in: pick a demo persona (no credentials - this is a simulation) -->
+  <section id="login" class="login" hidden>
+    <div class="login-card">
+      <div class="brand brand-lg">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7"/><path d="M8 12l8-5 8 5v2H8zM10 15h2.5v7H10zM14.75 15h2.5v7h-2.5zM19.5 15H22v7h-2.5zM8 23h16v2H8z"/></svg>
+        <div><strong>BankSim</strong><span>Corporate Banking</span></div>
+      </div>
+      <h1>Sign in</h1>
+      <p class="muted">Simulation of a corporate e-banking portal. Choose a demo user. No password needed; all data is fictional.</p>
+      <div id="login-users" class="persona-list"></div>
+      <p class="fineprint">Maker-checker: the <b>maker</b> initiates payments, a <b>checker</b> approves those above S$50,000.</p>
+    </div>
+  </section>
+
+  <div id="app" class="shell" hidden>
+    <header class="topbar">
+      <button class="icon-btn nav-toggle" id="nav-toggle" aria-label="Open menu" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <div class="brand">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7"/><path d="M8 12l8-5 8 5v2H8zM10 15h2.5v7H10zM14.75 15h2.5v7h-2.5zM19.5 15H22v7h-2.5zM8 23h16v2H8z"/></svg>
+        <div><strong>BankSim</strong><span>Corporate Banking</span></div>
+      </div>
+      <div class="topbar-right">
+        <a href="#/status" id="health-pill" class="pill pill-muted" title="Service status">
+          <span class="dot"></span><span class="pill-text">Checking services…</span>
+        </a>
+        <div class="user-chip">
+          <div class="avatar" id="user-avatar">?</div>
+          <div class="user-meta"><b id="user-name"></b><span id="user-role"></span></div>
+          <button class="btn btn-ghost btn-sm" id="switch-user">Switch</button>
+        </div>
+      </div>
+    </header>
+
+    <nav class="sidenav" id="sidenav" aria-label="Main">
+      <div class="company" id="company-name"></div>
+      <a href="#/dashboard" data-route="dashboard">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg>Overview</a>
+      <a href="#/payments" data-route="payments">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h13l-3-3M20 17H7l3 3"/></svg>Payments</a>
+      <a href="#/approvals" data-route="approvals">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 12l2 2 4-4M12 3l7 3v6c0 4.5-3 8-7 9-4-1-7-4.5-7-9V6z"/></svg>Approvals <span class="badge-count" id="approvals-count" hidden></span></a>
+      <a href="#/trade" data-route="trade">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6"/></svg>Trade finance</a>
+      <a href="#/onboarding" data-route="onboarding">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 10-8 0 4 4 0 008 0zM4 21c1-4 4.5-6 8-6s7 2 8 6"/></svg>Onboarding &amp; KYC</a>
+      <a href="#/status" data-route="status">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Service status</a>
+      <div class="sidenav-foot">
+        <span>Simulation · fictional data</span>
+        <span id="build-version"></span>
+      </div>
+    </nav>
+
+    <main id="view" class="view" tabindex="-1"></main>
+  </div>
+
+  <dialog id="trace-dialog" class="dialog" aria-labelledby="trace-title">
+    <form method="dialog" class="dialog-inner">
+      <header>
+        <h2 id="trace-title">Processing trace</h2>
+        <button class="icon-btn" value="close" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div id="trace-body"></div>
+    </form>
+  </dialog>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+</body>
+</html>

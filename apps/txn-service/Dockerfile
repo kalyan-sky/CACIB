@@ -7,8 +7,9 @@
 #   docker buildx build --platform linux/amd64 ...
 FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS build
 WORKDIR /src
-COPY go.mod main.go ./
-ARG VERSION=1.4.0
+COPY go.mod *.go ./
+COPY web ./web
+ARG VERSION=1.5.0
 ARG TARGETOS=linux
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \

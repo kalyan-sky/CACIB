@@ -25,6 +25,16 @@ incident note, with a timer.
  ...plus ~200 more services across 8 namespaces, each with an owner team, tier, cost centre and upstreams.
 ```
 
+## Corporate banking portal
+
+A customer-facing **corporate e-banking UI**: accounts, PayNow/MEPS+/SWIFT payments with
+maker-checker approval, letters of credit and KYC. Every action runs through the bank's real
+services, so the incidents you inject show up as customer impact.
+Open it with `./sim.sh portal`, or on EKS serve it from **AWS Lambda** with `make portal-lambda IP=<your-ip>`.
+See [`docs/bank-portal.md`](docs/bank-portal.md).
+
+![Portal](docs/images/portal-dashboard.png)
+
 ## What is inside
 
 | Piece | What it simulates |
@@ -32,6 +42,8 @@ incident note, with a timer.
 | `inventory/applications.yaml` | The CMDB: 216 apps, 8 business domains, owner teams, tiers, cost centres, dependencies |
 | `tools/platform.py render` | The **golden path**: one secure, observable, quota-bound deployment pattern generated for every app |
 | `platform/` | The "private cloud": a 3-worker kind cluster spread over 2 simulated Singapore data centres (3 zones), plus RBAC |
+| `apps/txn-service/portal.go`, `web/` | The corporate banking portal: UI + backend-for-frontend (`txn-service portal`) |
+| `lambda/portal-edge` | AWS Lambda front door for the portal on EKS (function URL → internal load balancer) |
 | `apps/txn-service` | One small Go service image behind every app. It calls its upstreams per transaction and can be made to crash, leak memory, slow down or fail via env vars |
 | Guardrails | Pod Security `restricted`, default-deny NetworkPolicies, ResourceQuota/LimitRange per namespace, PDBs and zone spread for tier-1, team RBAC |
 | `tools/platform.py audit` | A technology-risk control audit (7 controls) of manifests or the live cluster |
@@ -132,7 +144,8 @@ make apply
 ```
 inventory/applications.yaml   the 216-app CMDB (source of truth)
 tools/platform.py             render | audit | capacity | inventory | status | restore
-apps/txn-service/             Go service used by every app (serve | loadgen | probe)
+apps/txn-service/             Go service used by every app (serve | loadgen | portal | probe), portal UI in web/
+lambda/portal-edge/           Lambda front door for the portal (EKS)
 platform/                     kind and EKS (eksctl) cluster definitions, cluster RBAC
 scenarios/NN-*/               ticket.md, hints.md, solution.md, break.sh, check.sh, reset.sh
 scripts/                      setup (kind), eks-up / eks-down, deploy, shared shell helpers
@@ -151,5 +164,5 @@ Ideas that map to a real private-cloud platform roadmap:
 - **Upgrades**: rebuild the cluster on a newer `kindest/node` image node by node (the same skills as scenario 07).
 - **Autoscaling**: metrics-server + HPA for month-end batch peaks.
 
-See [`docs/eks.md`](docs/eks.md), [`docs/architecture.md`](docs/architecture.md), [`docs/triage-cheatsheet.md`](docs/triage-cheatsheet.md)
+See [`docs/bank-portal.md`](docs/bank-portal.md), [`docs/eks.md`](docs/eks.md), [`docs/architecture.md`](docs/architecture.md), [`docs/triage-cheatsheet.md`](docs/triage-cheatsheet.md)
 and [`docs/interview-notes.md`](docs/interview-notes.md).

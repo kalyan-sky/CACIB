@@ -10,6 +10,8 @@
 #   NODEGROUP_TYPE=managed|self managed node group (default), or self-managed for accounts whose
 #                               policies stop EKS from creating nodes on your behalf
 #   NODEGROUP_NAME=             override the node group name, e.g. to add a new one next to a failed one
+#   DEPLOY_ONLY=1               skip the cluster: just build/push the image and roll out the apps
+#                               (what `make eks-deploy` does after code changes)
 #
 # This creates billable AWS resources (EKS control plane, EC2, EBS, public IPs,
 # optional NAT). Tear everything down with scripts/eks-down.sh when you finish.
@@ -27,7 +29,7 @@ case "$NODEGROUP_TYPE" in
 esac
 ng_name="${NODEGROUP_NAME:-$ng_name}"
 REPO="bank-sim/txn-service"
-TAG="1.4.0"
+TAG="1.5.0"
 KUBE_CONTEXT="eks-$CLUSTER"
 export KUBE_CONTEXT
 
@@ -92,58 +94,64 @@ PY
   rm -rf "$work"
 }
 
-# AWS accounts on the Free plan can only launch free-tier-eligible instance
-# types; anything else fails silently inside the Auto Scaling group.
-free_types=$(aws ec2 describe-instance-types --region "$REGION" --filters Name=free-tier-eligible,Values=true \
-  --query 'InstanceTypes[].InstanceType' --output text 2>/dev/null | tr '\t' ' ' || true)
-if [ -n "$free_types" ] && ! grep -qw -- "$INSTANCE_TYPE" <<<"$free_types"; then
-  warn "$INSTANCE_TYPE is not free-tier eligible. If this account is on the AWS Free plan, nodes will never start."
-  warn "free-tier eligible here: $free_types  (e.g. INSTANCE_TYPE=m7i-flex.large)"
-fi
-
-# ---------------------------------------------------------------- cluster
-if [ "$PRIVATE_NODES" = 1 ]; then nat=Single private=true; else nat=Disable private=false; fi
-cfg="$SIM_STATE/eks-cluster.yaml"
-sed -e "s|__CLUSTER__|$CLUSTER|g" -e "s|__REGION__|$REGION|g" \
-  -e "s|__INSTANCE_TYPE__|$INSTANCE_TYPE|g" -e "s|__NAT__|$nat|g" -e "s|__PRIVATE__|$private|g" \
-  -e "s|__NODEGROUPS__|$ng_key|g" -e "s|__NODEGROUP_NAME__|$ng_name|g" \
-  "$ROOT/platform/eks-cluster.yaml" >"$cfg"
-if [ -n "${K8S_VERSION:-}" ]; then
-  sed -i.bak "s|__K8S_VERSION__|$K8S_VERSION|" "$cfg"
+if [ "${DEPLOY_ONLY:-0}" = 1 ]; then
+  eksctl get cluster --name "$CLUSTER" --region "$REGION" >/dev/null 2>&1 ||
+    die "cluster '$CLUSTER' not found in $REGION - run 'make eks-up' first"
+  aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION" --alias "$KUBE_CONTEXT" >/dev/null
 else
-  sed -i.bak '/__K8S_VERSION__/d' "$cfg"
-fi
-
-if eksctl get cluster --name "$CLUSTER" --region "$REGION" >/dev/null 2>&1; then
-  info "EKS cluster '$CLUSTER' already exists - reusing it"
-  aws eks wait cluster-active --name "$CLUSTER" --region "$REGION"
-  # A previous run may have been interrupted (e.g. a CloudShell session timing
-  # out) after the control plane but before the worker nodes: finish the job.
-  if ! eksctl get nodegroup --cluster "$CLUSTER" --region "$REGION" -o json 2>/dev/null | grep -q "\"$ng_name\""; then
-    # vpc-cni must carry the network-policy / prefix-delegation config before nodes join
-    eksctl get addon --cluster "$CLUSTER" --region "$REGION" -o json 2>/dev/null | grep -q '"vpc-cni"' ||
-      die "cluster '$CLUSTER' was only partly created (no add-ons). Delete it with 'make eks-down', then run 'make eks-up' again"
-    info "Node group '$ng_name' missing (first run interrupted, or switching NODEGROUP_TYPE) - creating it"
-    eksctl create nodegroup -f "$cfg"
+  # AWS accounts on the Free plan can only launch free-tier-eligible instance
+  # types; anything else fails silently inside the Auto Scaling group.
+  free_types=$(aws ec2 describe-instance-types --region "$REGION" --filters Name=free-tier-eligible,Values=true \
+    --query 'InstanceTypes[].InstanceType' --output text 2>/dev/null | tr '\t' ' ' || true)
+  if [ -n "$free_types" ] && ! grep -qw -- "$INSTANCE_TYPE" <<<"$free_types"; then
+    warn "$INSTANCE_TYPE is not free-tier eligible. If this account is on the AWS Free plan, nodes will never start."
+    warn "free-tier eligible here: $free_types  (e.g. INSTANCE_TYPE=m7i-flex.large)"
   fi
 
-else
-  info "Creating EKS cluster (15-20 minutes)"
-  eksctl create cluster -f "$cfg"
-fi
-aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION" --alias "$KUBE_CONTEXT" >/dev/null
+  # ---------------------------------------------------------------- cluster
+  if [ "$PRIVATE_NODES" = 1 ]; then nat=Single private=true; else nat=Disable private=false; fi
+  cfg="$SIM_STATE/eks-cluster.yaml"
+  sed -e "s|__CLUSTER__|$CLUSTER|g" -e "s|__REGION__|$REGION|g" \
+    -e "s|__INSTANCE_TYPE__|$INSTANCE_TYPE|g" -e "s|__NAT__|$nat|g" -e "s|__PRIVATE__|$private|g" \
+    -e "s|__NODEGROUPS__|$ng_key|g" -e "s|__NODEGROUP_NAME__|$ng_name|g" \
+    "$ROOT/platform/eks-cluster.yaml" >"$cfg"
+  if [ -n "${K8S_VERSION:-}" ]; then
+    sed -i.bak "s|__K8S_VERSION__|$K8S_VERSION|" "$cfg"
+  else
+    sed -i.bak '/__K8S_VERSION__/d' "$cfg"
+  fi
 
-info "Checking pod capacity and NetworkPolicy support"
-max_pods=$(jp '{.items[0].status.allocatable.pods}' nodes)
-if [ "${max_pods:-0}" -lt 100 ]; then
-  warn "nodes allow only $max_pods pods each - prefix delegation did not apply to them."
-  warn "fix: eksctl upgrade nodegroup / replace the node group after the vpc-cni addon is configured"
+  if eksctl get cluster --name "$CLUSTER" --region "$REGION" >/dev/null 2>&1; then
+    info "EKS cluster '$CLUSTER' already exists - reusing it"
+    aws eks wait cluster-active --name "$CLUSTER" --region "$REGION"
+    # A previous run may have been interrupted (e.g. a CloudShell session timing
+    # out) after the control plane but before the worker nodes: finish the job.
+    if ! eksctl get nodegroup --cluster "$CLUSTER" --region "$REGION" -o json 2>/dev/null | grep -q "\"$ng_name\""; then
+      # vpc-cni must carry the network-policy / prefix-delegation config before nodes join
+      eksctl get addon --cluster "$CLUSTER" --region "$REGION" -o json 2>/dev/null | grep -q '"vpc-cni"' ||
+        die "cluster '$CLUSTER' was only partly created (no add-ons). Delete it with 'make eks-down', then run 'make eks-up' again"
+      info "Node group '$ng_name' missing (first run interrupted, or switching NODEGROUP_TYPE) - creating it"
+      eksctl create nodegroup -f "$cfg"
+    fi
+
+  else
+    info "Creating EKS cluster (15-20 minutes)"
+    eksctl create cluster -f "$cfg"
+  fi
+  aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION" --alias "$KUBE_CONTEXT" >/dev/null
+
+  info "Checking pod capacity and NetworkPolicy support"
+  max_pods=$(jp '{.items[0].status.allocatable.pods}' nodes)
+  if [ "${max_pods:-0}" -lt 100 ]; then
+    warn "nodes allow only $max_pods pods each - prefix delegation did not apply to them."
+    warn "fix: eksctl upgrade nodegroup / replace the node group after the vpc-cni addon is configured"
+  fi
+  # The agent container is aws-eks-nodeagent (older releases: aws-network-policy-agent);
+  # it only enforces policies when started with --enable-network-policy=true.
+  k -n kube-system get ds aws-node -o jsonpath='{range .spec.template.spec.containers[*]}{.name} {.args}{"\n"}{end}' |
+    grep -E 'aws-eks-nodeagent|network-policy-agent' | grep -q 'enable-network-policy=true' ||
+    warn "VPC CNI network policy enforcement not enabled - scenario 03 will not reproduce (check the vpc-cni addon config)"
 fi
-# The agent container is aws-eks-nodeagent (older releases: aws-network-policy-agent);
-# it only enforces policies when started with --enable-network-policy=true.
-k -n kube-system get ds aws-node -o jsonpath='{range .spec.template.spec.containers[*]}{.name} {.args}{"\n"}{end}' |
-  grep -E 'aws-eks-nodeagent|network-policy-agent' | grep -q 'enable-network-policy=true' ||
-  warn "VPC CNI network policy enforcement not enabled - scenario 03 will not reproduce (check the vpc-cni addon config)"
 
 # ---------------------------------------------------------------- image
 info "Building and pushing $IMAGE (linux/amd64, with $BUILDER) to ECR"

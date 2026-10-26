@@ -15,6 +15,13 @@ if [ "${YES:-0}" != 1 ]; then
   [ "$answer" = "$CLUSTER" ] || die "aborted"
 fi
 
+# The portal's Lambda has network interfaces in the cluster VPC; remove it first
+# or the VPC cannot be deleted.
+if aws lambda get-function --function-name "$CLUSTER-portal" --region "$REGION" >/dev/null 2>&1 ||
+  aws iam get-role --role-name "$CLUSTER-portal-lambda" >/dev/null 2>&1; then
+  AWS_REGION="$REGION" "$ROOT/scripts/portal-lambda.sh" down
+fi
+
 info "Deleting EKS cluster '$CLUSTER' in $REGION (10-15 minutes)"
 if ! eksctl delete cluster --name "$CLUSTER" --region "$REGION" --wait; then
   # eksctl refuses when it cannot check IAM/OIDC resources (e.g. denied by a

@@ -5,7 +5,7 @@ kubectl -n trade-finance get pods -l app.kubernetes.io/name=lc-issuance
 #   lc-issuance-7d9..   1/1 Running            <- old ReplicaSet, still serving
 #   lc-issuance-5f4..   0/1 ImagePullBackOff   <- new ReplicaSet
 kubectl -n trade-finance describe pod <new-pod> | tail -5
-#   Failed to pull image ".../txn-service:1.4.1-hotfx": ... not found
+#   Failed to pull image ".../txn-service:1.5.1-hotfx": ... not found
 kubectl -n trade-finance rollout history deploy/lc-issuance
 kubectl -n trade-finance rollout undo deploy/lc-issuance
 kubectl -n trade-finance rollout status deploy/lc-issuance
@@ -17,7 +17,7 @@ removes an old one after the new one is Ready. The new pod never became Ready,
 so the old ReplicaSet kept serving. This is the reason the golden path sets
 those values.
 
-**Root cause:** typo in the image tag (`1.4.1-hotfx`). The image does not
+**Root cause:** typo in the image tag (`1.5.1-hotfx`). The image does not
 exist in the registry.
 
 ## Private-cloud angle

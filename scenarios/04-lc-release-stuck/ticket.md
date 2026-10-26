@@ -1,4 +1,4 @@
-**Short description:** CD pipeline "lc-issuance 1.4.1" failed: `kubectl rollout status` timed out after 10 minutes
+**Short description:** CD pipeline "lc-issuance 1.5.1" failed: `kubectl rollout status` timed out after 10 minutes
 **Reported by:** Release Management | **Assignment group:** Platform Engineering - Container Platform
 **Affected service:** `trade-finance/lc-issuance` (tier-2)
 

@@ -7,7 +7,7 @@ CLUSTER="${CLUSTER:-bank-sim}"
 # setup.sh (kind) and eks-up.sh record which cluster and image this checkout
 # drives; environment variables override them.
 KUBE_CONTEXT="${KUBE_CONTEXT:-$(cat "$SIM_STATE/context" 2>/dev/null || echo "kind-$CLUSTER")}"
-IMAGE="${IMAGE:-$(cat "$SIM_STATE/image" 2>/dev/null || echo bank-sim/txn-service:1.4.0)}"
+IMAGE="${IMAGE:-$(cat "$SIM_STATE/image" 2>/dev/null || echo bank-sim/txn-service:1.5.0)}"
 export KUBE_CONTEXT IMAGE
 PY="${PYTHON:-python3}"
 RENDERED="$ROOT/rendered"

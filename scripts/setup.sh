@@ -11,7 +11,7 @@ PROFILE="${PROFILE:-lite}"
 CNI="${CNI:-kindnet}"
 # Always target the kind cluster, even if this checkout last drove EKS.
 KUBE_CONTEXT="kind-$CLUSTER"
-IMAGE="bank-sim/txn-service:1.4.0"
+IMAGE="bank-sim/txn-service:1.5.0"
 export KUBE_CONTEXT IMAGE
 
 need docker  "install Docker Desktop / Docker Engine"
