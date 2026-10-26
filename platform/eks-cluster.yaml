@@ -15,6 +15,10 @@ metadata:
   tags:
     project: bank-sim
     purpose: training-lab
+# Classic managed node groups, not EKS Auto Mode: the scenarios drain and
+# label nodes directly, which Auto Mode's managed nodes do not allow.
+autoModeConfig:
+  enabled: false
 availabilityZones: ["__REGION__a", "__REGION__b", "__REGION__c"]
 iam:
   # No IAM OIDC provider: nothing in the lab needs IRSA, and sandbox / company
