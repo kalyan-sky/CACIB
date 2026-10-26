@@ -9,6 +9,7 @@
 #   PRIVATE_NODES=0|1           1 = nodes in private subnets behind a NAT gateway (bank-like, costs more)
 #   NODEGROUP_TYPE=managed|self managed node group (default), or self-managed for accounts whose
 #                               policies stop EKS from creating nodes on your behalf
+#   NODEGROUP_NAME=             override the node group name, e.g. to add a new one next to a failed one
 #
 # This creates billable AWS resources (EKS control plane, EC2, EBS, public IPs,
 # optional NAT). Tear everything down with scripts/eks-down.sh when you finish.
@@ -24,6 +25,7 @@ case "$NODEGROUP_TYPE" in
   self) ng_key=nodeGroups ng_name=workers-self ;;
   *) die "NODEGROUP_TYPE must be managed or self" ;;
 esac
+ng_name="${NODEGROUP_NAME:-$ng_name}"
 REPO="bank-sim/txn-service"
 TAG="1.4.0"
 KUBE_CONTEXT="eks-$CLUSTER"
@@ -89,6 +91,15 @@ PY
   "$crane" tag "$IMAGE" latest
   rm -rf "$work"
 }
+
+# AWS accounts on the Free plan can only launch free-tier-eligible instance
+# types; anything else fails silently inside the Auto Scaling group.
+free_types=$(aws ec2 describe-instance-types --region "$REGION" --filters Name=free-tier-eligible,Values=true \
+  --query 'InstanceTypes[].InstanceType' --output text 2>/dev/null | tr '\t' ' ' || true)
+if [ -n "$free_types" ] && ! grep -qw -- "$INSTANCE_TYPE" <<<"$free_types"; then
+  warn "$INSTANCE_TYPE is not free-tier eligible. If this account is on the AWS Free plan, nodes will never start."
+  warn "free-tier eligible here: $free_types  (e.g. INSTANCE_TYPE=m7i-flex.large)"
+fi
 
 # ---------------------------------------------------------------- cluster
 if [ "$PRIVATE_NODES" = 1 ]; then nat=Single private=true; else nat=Disable private=false; fi
