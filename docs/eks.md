@@ -118,7 +118,7 @@ Extra EKS drills:
 - **Look at it from AWS:** EKS console → cluster `bank-sim` → Resources / Compute. Also EC2 → network
   interfaces (pod IPs are real VPC IPs).
 - **Network policy agent logs** while you do scenario 03:
-  `kubectl -n kube-system logs ds/aws-node -c aws-network-policy-agent --tail=50`
+  `kubectl -n kube-system logs ds/aws-node -c aws-eks-nodeagent --tail=50`
 - **Scenario 07 for real:** after fixing the PDB, run
   `eksctl upgrade nodegroup --cluster bank-sim --name workers --region ap-southeast-1`.
   With the broken PDB the upgrade fails with `PodEvictionFailure`. That is the same lesson at cloud scale.
@@ -147,7 +147,7 @@ aws ecr describe-repositories --region ap-southeast-1
 | Pods `Pending`, event `Too many pods` | Prefix delegation did not reach the nodes. `eks-up.sh` warns if allocatable pods < 100. Recreate the node group: `eksctl delete nodegroup` then `eksctl create nodegroup -f <config>`. |
 | `ImagePullBackOff` from ECR with `exec format error` in logs | The image was built for arm64. Rebuild with `--platform linux/amd64` (eks-up.sh does this). |
 | `ImagePullBackOff`, 403 | The node role lacks `AmazonEC2ContainerRegistryReadOnly` (eksctl adds it by default), or the region doesn't match. |
-| Scenario 03 doesn't break | Network policy isn't enforced. `kubectl -n kube-system get ds aws-node -o yaml | grep -i network-policy`, and check the vpc-cni addon config in the EKS console. |
+| Scenario 03 doesn't break | Network policy isn't enforced. `kubectl -n kube-system get ds aws-node -o yaml | grep -i enable-network-policy`, and check the vpc-cni addon config in the EKS console. |
 | `error: You must be logged in to the server (Unauthorized)` | Stale credentials. Run `aws sso login` / `aws sts get-caller-identity`, then `aws eks update-kubeconfig --name bank-sim --region ap-southeast-1 --alias eks-bank-sim`. |
 | Auto Scaling activity says `The specified instance type is not eligible for Free Tier` | The account is on the AWS **Free plan**, which only launches free-tier-eligible types. List them with `aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true --query 'InstanceTypes[].InstanceType'`, then use one, e.g. `INSTANCE_TYPE=m7i-flex.large` (2 vCPU / 8 GiB). Usage is paid from the plan's credits. |
 | Node group stuck in `CREATING` with no Auto Scaling group; eksctl ends with `exceeded max wait time` | EKS can't create the nodes on your behalf. This is common in sandbox accounts. Reuse the cluster with a self-managed node group: `NODEGROUP_TYPE=self make eks-up`. It adds `workers-self` next to the stuck `workers`. Everything in the lab works the same, except that patching is "create a new node group, delete the old one" instead of `eksctl upgrade nodegroup`. |

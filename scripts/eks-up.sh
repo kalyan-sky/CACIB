@@ -139,8 +139,11 @@ if [ "${max_pods:-0}" -lt 100 ]; then
   warn "nodes allow only $max_pods pods each - prefix delegation did not apply to them."
   warn "fix: eksctl upgrade nodegroup / replace the node group after the vpc-cni addon is configured"
 fi
-k -n kube-system get ds aws-node -o jsonpath='{.spec.template.spec.containers[*].name}' | grep -q network-policy-agent ||
-  warn "VPC CNI network policy agent not found - scenario 03 will not reproduce (check the vpc-cni addon config)"
+# The agent container is aws-eks-nodeagent (older releases: aws-network-policy-agent);
+# it only enforces policies when started with --enable-network-policy=true.
+k -n kube-system get ds aws-node -o jsonpath='{range .spec.template.spec.containers[*]}{.name} {.args}{"\n"}{end}' |
+  grep -E 'aws-eks-nodeagent|network-policy-agent' | grep -q 'enable-network-policy=true' ||
+  warn "VPC CNI network policy enforcement not enabled - scenario 03 will not reproduce (check the vpc-cni addon config)"
 
 # ---------------------------------------------------------------- image
 info "Building and pushing $IMAGE (linux/amd64, with $BUILDER) to ECR"
