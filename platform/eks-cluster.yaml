@@ -37,8 +37,10 @@ addons:
     version: latest
   - name: coredns
     version: latest
-managedNodeGroups:
-  - name: workers
+# __NODEGROUPS__ is managedNodeGroups (EKS creates the nodes) or nodeGroups
+# (self-managed: eksctl creates the Auto Scaling group through CloudFormation).
+__NODEGROUPS__:
+  - name: __NODEGROUP_NAME__
     instanceType: __INSTANCE_TYPE__
     desiredCapacity: 3
     minSize: 3

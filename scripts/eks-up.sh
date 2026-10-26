@@ -7,6 +7,8 @@
 #   INSTANCE_TYPE=t3.medium     worker size (t3.large suggested for PROFILE=full)
 #   K8S_VERSION=                EKS Kubernetes version (default: eksctl's default)
 #   PRIVATE_NODES=0|1           1 = nodes in private subnets behind a NAT gateway (bank-like, costs more)
+#   NODEGROUP_TYPE=managed|self managed node group (default), or self-managed for accounts whose
+#                               policies stop EKS from creating nodes on your behalf
 #
 # This creates billable AWS resources (EKS control plane, EC2, EBS, public IPs,
 # optional NAT). Tear everything down with scripts/eks-down.sh when you finish.
@@ -16,6 +18,12 @@ REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-southeast-1}}"
 PROFILE="${PROFILE:-lite}"
 INSTANCE_TYPE="${INSTANCE_TYPE:-t3.medium}"
 PRIVATE_NODES="${PRIVATE_NODES:-0}"
+NODEGROUP_TYPE="${NODEGROUP_TYPE:-managed}"
+case "$NODEGROUP_TYPE" in
+  managed) ng_key=managedNodeGroups ng_name=workers ;;
+  self) ng_key=nodeGroups ng_name=workers-self ;;
+  *) die "NODEGROUP_TYPE must be managed or self" ;;
+esac
 REPO="bank-sim/txn-service"
 TAG="1.4.0"
 KUBE_CONTEXT="eks-$CLUSTER"
@@ -87,6 +95,7 @@ if [ "$PRIVATE_NODES" = 1 ]; then nat=Single private=true; else nat=Disable priv
 cfg="$SIM_STATE/eks-cluster.yaml"
 sed -e "s|__CLUSTER__|$CLUSTER|g" -e "s|__REGION__|$REGION|g" \
   -e "s|__INSTANCE_TYPE__|$INSTANCE_TYPE|g" -e "s|__NAT__|$nat|g" -e "s|__PRIVATE__|$private|g" \
+  -e "s|__NODEGROUPS__|$ng_key|g" -e "s|__NODEGROUP_NAME__|$ng_name|g" \
   "$ROOT/platform/eks-cluster.yaml" >"$cfg"
 if [ -n "${K8S_VERSION:-}" ]; then
   sed -i.bak "s|__K8S_VERSION__|$K8S_VERSION|" "$cfg"
@@ -99,13 +108,14 @@ if eksctl get cluster --name "$CLUSTER" --region "$REGION" >/dev/null 2>&1; then
   aws eks wait cluster-active --name "$CLUSTER" --region "$REGION"
   # A previous run may have been interrupted (e.g. a CloudShell session timing
   # out) after the control plane but before the worker nodes: finish the job.
-  if ! eksctl get nodegroup --cluster "$CLUSTER" --region "$REGION" -o json 2>/dev/null | grep -q '"workers"'; then
+  if ! eksctl get nodegroup --cluster "$CLUSTER" --region "$REGION" -o json 2>/dev/null | grep -q "\"$ng_name\""; then
     # vpc-cni must carry the network-policy / prefix-delegation config before nodes join
     eksctl get addon --cluster "$CLUSTER" --region "$REGION" -o json 2>/dev/null | grep -q '"vpc-cni"' ||
       die "cluster '$CLUSTER' was only partly created (no add-ons). Delete it with 'make eks-down', then run 'make eks-up' again"
-    info "Node group missing (an earlier run was interrupted) - creating it"
+    info "Node group '$ng_name' missing (first run interrupted, or switching NODEGROUP_TYPE) - creating it"
     eksctl create nodegroup -f "$cfg"
   fi
+
 else
   info "Creating EKS cluster (15-20 minutes)"
   eksctl create cluster -f "$cfg"
