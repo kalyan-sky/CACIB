@@ -10,8 +10,8 @@ TF_DIR="$ROOT/terraform"
 need terraform "https://developer.hashicorp.com/terraform/install"
 need aws "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
 
-REGION=$(terraform -chdir="$TF_DIR" output -raw region 2>/dev/null) || die "no Terraform state in $TF_DIR - nothing to destroy"
-CLUSTER=$(terraform -chdir="$TF_DIR" output -raw cluster_name)
+REGION=$(tf_output region)
+CLUSTER=$(tf_output cluster_name)
 KUBE_CONTEXT="eks-$CLUSTER"
 export KUBE_CONTEXT AWS_REGION="$REGION"
 
@@ -35,7 +35,7 @@ if k get --raw /readyz >/dev/null 2>&1; then
   done
   if [ -n "$lbs" ]; then
     info "Waiting for AWS to remove those load balancers"
-    vpc=$(terraform -chdir="$TF_DIR" output -raw vpc_id)
+    vpc=$(tf_output vpc_id)
     for _ in $(seq 40); do
       left=$(aws elb describe-load-balancers --query "length(LoadBalancerDescriptions[?VPCId=='$vpc'])" --output text 2>/dev/null || echo 0)
       left2=$(aws elbv2 describe-load-balancers --query "length(LoadBalancers[?VpcId=='$vpc'])" --output text 2>/dev/null || echo 0)

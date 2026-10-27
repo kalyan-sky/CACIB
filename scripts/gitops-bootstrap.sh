@@ -19,9 +19,8 @@ need aws "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-insta
 need kubectl "https://kubernetes.io/docs/tasks/tools/"
 need git "install git"
 
-REGION=$(terraform -chdir="$TF_DIR" output -raw region 2>/dev/null) ||
-  die "no Terraform outputs in $TF_DIR - run 'make tf-up' first"
-CLUSTER=$(terraform -chdir="$TF_DIR" output -raw cluster_name)
+REGION=$(tf_output region)
+CLUSTER=$(tf_output cluster_name)
 KUBE_CONTEXT="eks-$CLUSTER"
 export KUBE_CONTEXT
 

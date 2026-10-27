@@ -62,6 +62,20 @@ check_result() {
   return "$FAILED"
 }
 
+# tf_output <name>: read a Terraform output from terraform/. Re-runs `terraform
+# init` first when needed (e.g. a new CloudShell session wiped TF_DATA_DIR in
+# /tmp), and shows Terraform's own error instead of hiding it.
+tf_output() {
+  local dir="$ROOT/terraform" out
+  [ -f "$dir/terraform.tfstate" ] ||
+    die "no terraform.tfstate in $dir - has 'terraform apply' run from this folder? (never delete that file)"
+  if ! out=$(terraform -chdir="$dir" output -raw "$1" 2>&1); then
+    terraform -chdir="$dir" init -input=false >/dev/null 2>&1 || true
+    out=$(terraform -chdir="$dir" output -raw "$1" 2>&1) || die "terraform output $1 failed: $out"
+  fi
+  printf '%s' "$out"
+}
+
 # gitops_pull: in GitOps mode (scripts/gitops-bootstrap.sh), make rendered/ an
 # exact copy of what Argo CD deploys - the gitops branch - so scenario resets
 # restore the same image tags and settings that are running.
