@@ -83,5 +83,8 @@ test: ## offline checks: Go tests, render both profiles, audit, script syntax
 	$(PY) tools/platform.py render --profile lite --out /tmp/bank-sim-lite
 	$(PY) tools/platform.py audit --path /tmp/bank-sim-lite >/dev/null
 	@for f in sim.sh scripts/*.sh scenarios/*/*.sh ci/*.sh; do bash -n $$f || exit 1; done
+	@$(PY) -c 'import yaml, sys; d = yaml.safe_load(open(".gitlab-ci.yml")); \
+	  bad = [(j, l) for j, v in d.items() if isinstance(v, dict) for k in ("script", "before_script", "after_script") for l in v.get(k, []) if not isinstance(l, str)]; \
+	  sys.exit("gitlab-ci: non-string script lines (quote lines containing \": \"): %s" % bad) if bad else print(".gitlab-ci.yml: script lines OK")'
 	@if command -v kubeconform >/dev/null; then kubeconform -strict -summary /tmp/bank-sim-full; fi
 	@echo "all offline checks passed"
