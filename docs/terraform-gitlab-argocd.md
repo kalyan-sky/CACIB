@@ -52,6 +52,16 @@ terraform version
 ```
 (`~/bin` survives CloudShell restarts; tools installed with `dnf` don't.)
 
+**CloudShell disk:** your home directory holds only 1 GB, and the AWS provider alone is
+several hundred MB. Keep Terraform's working files in `/tmp`, which is larger but wiped at
+the end of a session; the state file stays in your home folder:
+```bash
+echo 'export TF_DATA_DIR=/tmp/terraform-data' >> ~/.bashrc
+export TF_DATA_DIR=/tmp/terraform-data
+rm -rf ~/aws ~/awscliv2.zip ~/.cache/go-build      # installer leftovers and caches, if present
+```
+In a new CloudShell session, run `terraform init` again before other Terraform commands.
+
 ## Step 3: GitLab project, token and first pipeline
 
 1. Sign in at **gitlab.com**. New accounts must **verify their identity** (phone or card)
@@ -176,6 +186,7 @@ source of truth.
 | Argo CD: `resource :Secret is not permitted in project bank-sim` | The AppProject guardrail is working: something other than the platform's rendered kinds reached the gitops branch. |
 | `terraform apply`: `AccessDenied … service control policy` | Your organization's Free plan rules. Paste the error; the config avoids the known ones (OIDC, non-free instance types). |
 | Node group never gets nodes | `instance_type` isn't free-tier eligible: `aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true --query 'InstanceTypes[].InstanceType'` |
+| `terraform init`: `no space left on device` | CloudShell's 1 GB home is full. Set `TF_DATA_DIR=/tmp/terraform-data` (Step 2) and remove installer leftovers |
 | `terraform destroy` stuck on the VPC or subnets | Something outside Terraform still has a network interface in the VPC (a load balancer, the Lambda). Use `make tf-down`, which removes those first. |
 
 ## Interview talking points
