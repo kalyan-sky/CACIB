@@ -1,0 +1,38 @@
+# The whole bank as one Argo CD application, deployed from the `gitops`
+# branch that CI writes (ci/publish-gitops.sh).
+#
+# selfHeal is OFF on purpose: the incident scenarios change the cluster with
+# kubectl, and Argo CD then shows exactly what drifted (OutOfSync + diff)
+# instead of silently undoing it. Turn it on to see GitOps self-healing:
+#   kubectl -n argocd patch application bank-sim --type merge \
+#     -p '{"spec":{"syncPolicy":{"automated":{"selfHeal":true}}}}'
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bank-sim
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io # deleting the app deletes what it deployed
+spec:
+  project: bank-sim
+  source:
+    repoURL: __REPO_URL__
+    targetRevision: gitops
+    path: deploy/eks
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true # an app removed from the inventory is removed from the cluster
+      selfHeal: false
+    syncOptions:
+      - ApplyOutOfSyncOnly=true
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

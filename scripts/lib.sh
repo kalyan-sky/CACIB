@@ -62,8 +62,26 @@ check_result() {
   return "$FAILED"
 }
 
+# gitops_pull: in GitOps mode (scripts/gitops-bootstrap.sh), make rendered/ an
+# exact copy of what Argo CD deploys - the gitops branch - so scenario resets
+# restore the same image tags and settings that are running.
+gitops_pull() {
+  local remote tmp
+  remote=$(cat "$SIM_STATE/gitops-remote" 2>/dev/null) || return 0
+  git -C "$ROOT" fetch -q "$remote" gitops 2>/dev/null ||
+    { warn "could not fetch $remote/gitops - using the existing rendered/"; return 0; }
+  tmp=$(mktemp -d)
+  git -C "$ROOT" archive "$remote/gitops" deploy/eks | tar -x -C "$tmp"
+  rm -rf "$RENDERED"
+  mv "$tmp/deploy/eks" "$RENDERED"
+  rm -rf "$tmp"
+}
+
 require_cluster() {
   k get --raw /readyz >/dev/null 2>&1 ||
-    die "cluster context '$KUBE_CONTEXT' not reachable - run 'make up' (kind) or 'make eks-up' (EKS) first"
+    die "cluster context '$KUBE_CONTEXT' not reachable - run 'make up' (kind), 'make eks-up' or 'make tf-up' first"
+  if [ -f "$SIM_STATE/gitops-remote" ]; then
+    gitops_pull
+  fi
   [ -d "$RENDERED" ] || die "rendered/ missing - run 'make render apply'"
 }

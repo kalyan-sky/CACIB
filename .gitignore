@@ -2,3 +2,8 @@ rendered/
 __pycache__/
 *.pyc
 .sim-state/
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/terraform.tfvars
+terraform/tfplan

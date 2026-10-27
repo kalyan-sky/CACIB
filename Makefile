@@ -6,7 +6,7 @@ CLUSTER ?= bank-sim
 IMAGE   ?= $(shell cat .sim-state/image 2>/dev/null || echo bank-sim/txn-service:1.5.0)
 CONTEXT ?= $(shell cat .sim-state/context 2>/dev/null || echo kind-$(CLUSTER))
 
-.PHONY: help up down eks-up eks-deploy eks-down portal-lambda portal-lambda-down render apply diff build audit audit-offline capacity inventory status test
+.PHONY: help up down eks-up eks-deploy eks-down tf-up gitops-bootstrap tf-down gitops-pull portal-lambda portal-lambda-down render apply diff build audit audit-offline capacity inventory status test
 
 help: ## show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-14s %s\n", $$1, $$2}'
@@ -25,6 +25,21 @@ eks-deploy: ## EKS: rebuild + push the image and roll out the apps (no cluster c
 
 eks-down: ## delete the EKS cluster, ECR repository and portal Lambda
 	./scripts/eks-down.sh
+
+tf-up: ## Terraform: VPC + EKS + nodes + add-ons (~20 min), settings in terraform/terraform.tfvars
+	@test -f terraform/terraform.tfvars || { cp terraform/terraform.tfvars.example terraform/terraform.tfvars; \
+	  echo "created terraform/terraform.tfvars from the example - check region and instance_type, then re-run"; exit 1; }
+	terraform -chdir=terraform init -input=false
+	terraform -chdir=terraform apply
+
+gitops-bootstrap: ## install Argo CD and deploy the bank from the gitops branch (REPO_URL=, ARGOCD_UI_IP=)
+	./scripts/gitops-bootstrap.sh
+
+tf-down: ## destroy the Terraform environment (removes Lambda + load balancers first)
+	./scripts/tf-down.sh
+
+gitops-pull: ## refresh rendered/ from the gitops branch (what Argo CD deploys)
+	@bash -c 'source scripts/lib.sh && gitops_pull && ls rendered'
 
 portal-lambda: ## EKS: serve the bank portal from AWS Lambda; IP=<your public IP>
 	./scripts/portal-lambda.sh up $(IP)
@@ -67,6 +82,6 @@ test: ## offline checks: Go tests, render both profiles, audit, script syntax
 	$(PY) tools/platform.py audit --path /tmp/bank-sim-full >/dev/null
 	$(PY) tools/platform.py render --profile lite --out /tmp/bank-sim-lite
 	$(PY) tools/platform.py audit --path /tmp/bank-sim-lite >/dev/null
-	@for f in sim.sh scripts/*.sh scenarios/*/*.sh; do bash -n $$f || exit 1; done
+	@for f in sim.sh scripts/*.sh scenarios/*/*.sh ci/*.sh; do bash -n $$f || exit 1; done
 	@if command -v kubeconform >/dev/null; then kubeconform -strict -summary /tmp/bank-sim-full; fi
 	@echo "all offline checks passed"

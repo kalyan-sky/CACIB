@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars and adjust.
+region             = "ap-southeast-2" # the region your account allows; ap-southeast-1 = Singapore
+cluster_name       = "bank-sim"
+kubernetes_version = "1.37"
+instance_type      = "m7i-flex.large" # must be free-tier eligible on an AWS Free plan account
+node_count         = 3

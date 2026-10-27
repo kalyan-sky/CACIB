@@ -34,8 +34,10 @@ except ImportError:
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INVENTORY = os.path.join(ROOT, "inventory", "applications.yaml")
 DEFAULT_IMAGE = "bank-sim/txn-service:1.5.0"
-# Local images (kind), the bank's internal registry, or Amazon ECR (EKS).
-APPROVED_REGISTRY = re.compile(r"^(bank-sim/|registry\.bank\.local/|\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/)")
+# Local images (kind), the bank's internal registry, Amazon ECR (EKS), or the
+# GitLab container registry (GitOps pipeline).
+APPROVED_REGISTRY = re.compile(r"^(bank-sim/|registry\.bank\.local/|\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/"
+                               r"|registry\.gitlab\.com/)")
 SIM_STATE = os.path.join(ROOT, ".sim-state")
 LITE_FILLERS_PER_DOMAIN = 5
 TRAFFIC_NS = "sim-traffic"
@@ -442,7 +444,9 @@ CONTROLS = {
     "C07": "Namespace guardrails: PSA restricted, default-deny ingress, ResourceQuota",
 }
 REQUIRED_LABELS = ["bank.sim/owner-team", "bank.sim/tier", "bank.sim/cost-centre", "bank.sim/data-classification"]
-SKIP_NS = {"kube-system", "kube-public", "kube-node-lease", "local-path-storage", TRAFFIC_NS}
+# Platform tooling namespaces follow their vendor's hardening baseline, not the
+# application controls below.
+SKIP_NS = {"kube-system", "kube-public", "kube-node-lease", "local-path-storage", "argocd", TRAFFIC_NS}
 
 
 def load_objects(args):
@@ -670,8 +674,16 @@ def restore_object(obj):
     carry the allocated clusterIP.
     """
     kube = kubectl()
-    body = json.dumps(obj)
     what = f"{obj['kind']}/{obj['metadata']['name']}"
+    # Keep Argo CD's ownership marker, or Argo CD stops recognising the object as its own.
+    ns = ["-n", obj["metadata"]["namespace"]] if obj["metadata"].get("namespace") else []
+    live = subprocess.run(kube + ["get", obj["kind"], obj["metadata"]["name"], *ns, "-o",
+                                  "jsonpath={.metadata.annotations.argocd\\.argoproj\\.io/tracking-id}"],
+                          capture_output=True, text=True)
+    if live.returncode == 0 and live.stdout:
+        obj = json.loads(json.dumps(obj))
+        obj["metadata"].setdefault("annotations", {})["argocd.argoproj.io/tracking-id"] = live.stdout
+    body = json.dumps(obj)
     verb = ["apply", "-f", "-"] if obj["kind"] == "Service" else ["replace", "--save-config", "-f", "-"]
     for _ in range(5):
         out = subprocess.run(kube + verb, input=body, capture_output=True, text=True)

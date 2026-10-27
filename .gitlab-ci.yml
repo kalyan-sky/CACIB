@@ -1,0 +1,95 @@
+# Bank simulation - GitLab CI/CD
+#
+#   every branch / merge request:  test  (Go, Python, manifests, audit, schemas)
+#   default branch (main) only:    build (image -> GitLab Container Registry)
+#                                  publish (rendered manifests -> `gitops` branch)
+#
+# Argo CD watches the `gitops` branch and deploys it. The pipeline never talks
+# to the cluster and holds no AWS credentials ("pull-based" GitOps).
+#
+# One CI/CD variable is required (Settings > CI/CD > Variables, Masked):
+#   GITOPS_TOKEN  a personal access token with the write_repository scope,
+#                 used to push to the gitops branch.
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "gitops" # Argo CD's branch: nothing to build
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never # the merge request pipeline covers it
+    - if: $CI_COMMIT_BRANCH
+
+stages: [test, build, publish]
+
+variables:
+  IMAGE: $CI_REGISTRY_IMAGE/txn-service:$CI_COMMIT_SHORT_SHA
+  PROFILE: lite
+  GO_IMAGE: golang:1.23
+  PY_IMAGE: python:3.12-slim
+
+.on_default_branch:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+go-test:
+  stage: test
+  image: $GO_IMAGE
+  script:
+    - cd apps/txn-service
+    - go vet ./...
+    - go test -race -count=1 ./...
+
+python-and-scripts:
+  stage: test
+  image: $PY_IMAGE
+  script:
+    - pip install -q -r requirements.txt
+    - python -m unittest discover -s lambda/portal-edge
+    - for f in sim.sh scripts/*.sh scenarios/*/*.sh ci/*.sh; do bash -n "$f"; done
+
+manifests:
+  stage: test
+  image: $PY_IMAGE
+  script:
+    - pip install -q -r requirements.txt
+    - python tools/platform.py inventory --top 5
+    # every app in the inventory must pass the platform controls, in both profiles
+    - python tools/platform.py render --profile full --image "$IMAGE" --out full-render
+    - python tools/platform.py audit --path full-render
+    - python tools/platform.py render --profile "$PROFILE" --image "$IMAGE"
+    - python tools/platform.py audit --path rendered
+  artifacts:
+    paths: [rendered/]
+    expire_in: 1 week
+
+schemas:
+  stage: test
+  image: $GO_IMAGE
+  needs: [manifests]
+  script:
+    - go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+    - $(go env GOPATH)/bin/kubeconform -strict -summary rendered/ platform/cluster-rbac.yaml
+
+build-image:
+  stage: build
+  image: $GO_IMAGE
+  extends: .on_default_branch
+  script:
+    - ci/build-image.sh "$IMAGE" "1.5.0+$CI_COMMIT_SHORT_SHA"
+
+publish-gitops:
+  stage: publish
+  image: $PY_IMAGE
+  extends: .on_default_branch
+  needs: [build-image, schemas, go-test, python-and-scripts]
+  resource_group: gitops # one publish at a time, in pipeline order
+  script:
+    - test -n "$GITOPS_TOKEN" || { echo "Set the masked CI/CD variable GITOPS_TOKEN (write_repository)"; exit 1; }
+    - apt-get -qq update >/dev/null && apt-get -qq install -y git >/dev/null
+    - pip install -q -r requirements.txt
+    - export GITOPS_REPO_URL="https://oauth2:${GITOPS_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+    - export COMMIT_MESSAGE="deploy ${CI_COMMIT_SHORT_SHA}: ${CI_COMMIT_TITLE}"
+    - ci/publish-gitops.sh "$IMAGE"
+  environment:
+    name: eks

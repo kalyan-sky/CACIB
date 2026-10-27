@@ -25,6 +25,16 @@ incident note, with a timer.
  ...plus ~200 more services across 8 namespaces, each with an owner team, tier, cost centre and upstreams.
 ```
 
+## Terraform + GitLab CI + Argo CD
+
+The same bank, run the way platform teams do it:
+- **Terraform** builds the VPC and EKS (`terraform/`).
+- **GitLab CI** tests, builds the image and publishes rendered manifests to a `gitops` branch (`.gitlab-ci.yml`, `ci/`).
+- **Argo CD** deploys from that branch (`gitops/argocd/`).
+
+Step-by-step: [`docs/terraform-gitlab-argocd.md`](docs/terraform-gitlab-argocd.md).
+Practice drills for incidents, GitOps and AWS failures: [`docs/debugging-practice.md`](docs/debugging-practice.md).
+
 ## Corporate banking portal
 
 A customer-facing **corporate e-banking UI**: accounts, PayNow/MEPS+/SWIFT payments with
@@ -147,6 +157,9 @@ tools/platform.py             render | audit | capacity | inventory | status | r
 apps/txn-service/             Go service used by every app (serve | loadgen | portal | probe), portal UI in web/
 lambda/portal-edge/           Lambda front door for the portal (EKS)
 platform/                     kind and EKS (eksctl) cluster definitions, cluster RBAC
+terraform/                    VPC + EKS + node group + add-ons as code
+.gitlab-ci.yml, ci/           pipeline: test, build image (no Docker), publish to the gitops branch
+gitops/argocd/                Argo CD AppProject + Application
 scenarios/NN-*/               ticket.md, hints.md, solution.md, break.sh, check.sh, reset.sh
 scripts/                      setup (kind), eks-up / eks-down, deploy, shared shell helpers
 docs/                         architecture, triage cheat-sheet, interview notes

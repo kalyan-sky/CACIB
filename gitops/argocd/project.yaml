@@ -1,0 +1,40 @@
+# Guardrails for what Argo CD may deploy for the bank: only from this repo,
+# only into this cluster, and only the kinds the platform renders. Anything
+# else that appears in the GitOps branch (a CRD, a DaemonSet, a Secret...) is
+# refused at sync time instead of being applied.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: bank-sim
+  namespace: argocd
+spec:
+  description: Simulated bank - 200+ banking applications
+  sourceRepos:
+    - __REPO_URL__
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange
+    - group: apps
+      kind: Deployment
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding
