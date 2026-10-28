@@ -45,7 +45,9 @@ That gives you a real 2-node kubeadm cluster for about an hour per session; star
 
 **kind on your laptop** (Docker Desktop): `kind create cluster`, then run the same commands.
 
-**EKS:** works too (`terraform apply` + `aws eks update-kubeconfig`), but costs credits. Not needed for these cases.
+**EKS (hands-on AWS):** run them on your Terraform cluster and also practise the AWS side of
+each case (console views, EBS, security groups, load balancer subnets). See
+[`../docs/aws-hands-on.md`](../docs/aws-hands-on.md). Costs about USD 0.45/hour from credits.
 
 Needs: `bash`, `kubectl` pointed at the cluster, and internet access for the images.
 

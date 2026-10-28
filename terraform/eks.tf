@@ -162,3 +162,17 @@ resource "aws_eks_addon" "metrics_server" {
 
   depends_on = [aws_eks_node_group.workers]
 }
+
+resource "aws_eks_addon" "ebs_csi" {
+  count = var.enable_ebs_csi_driver ? 1 : 0
+
+  cluster_name = aws_eks_cluster.this.name
+  addon_name   = "aws-ebs-csi-driver"
+  configuration_values = jsonencode({
+    defaultStorageClass = { enabled = true } # creates "ebs-csi-default-sc" (gp3) as the cluster default
+  })
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "PRESERVE"
+
+  depends_on = [aws_eks_node_group.workers, aws_iam_role_policy_attachment.node_ebs_csi]
+}

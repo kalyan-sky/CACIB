@@ -47,3 +47,12 @@ resource "aws_iam_role_policy_attachment" "node" {
   role       = aws_iam_role.node.name
   policy_arn = each.value
 }
+
+# EBS CSI driver permissions on the node role (no OIDC / IRSA needed). The
+# controller reaches them through the instance metadata service, which is why
+# the launch template allows a hop limit of 2.
+resource "aws_iam_role_policy_attachment" "node_ebs_csi" {
+  count      = var.enable_ebs_csi_driver ? 1 : 0
+  role       = aws_iam_role.node.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}

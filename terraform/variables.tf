@@ -51,3 +51,9 @@ variable "enable_metrics_server" {
   type        = bool
   default     = true
 }
+
+variable "enable_ebs_csi_driver" {
+  description = "Install the EBS CSI driver (PersistentVolumes on EBS) with a default gp3 StorageClass"
+  type        = bool
+  default     = true
+}

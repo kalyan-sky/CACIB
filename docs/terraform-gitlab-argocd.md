@@ -94,7 +94,7 @@ In a new CloudShell session, run `terraform init` again before other Terraform c
 cd ~/CACIB/terraform
 cp terraform.tfvars.example terraform.tfvars    # region = ap-southeast-2, instance_type = m7i-flex.large
 terraform init
-terraform plan -out tfplan                      # read it: "Plan: 30 to add, 0 to change, 0 to destroy" (16 network, 7 IAM, 7 EKS/nodes)
+terraform plan -out tfplan                      # read it: "Plan: 32 to add, 0 to change, 0 to destroy" (16 network, 8 IAM, 8 EKS/nodes/add-ons)
 terraform apply tfplan                          # 15-20 min; press a key now and then so CloudShell stays open
 terraform output
 ```
@@ -103,7 +103,7 @@ What it builds and why, file by file:
 |---|---|
 | `vpc.tf` | VPC over 3 AZs; public subnets for nodes, private subnets for internal LBs and Lambda; NAT optional (off) |
 | `iam.tf` | cluster role and node role. No IAM OIDC provider, which your organization blocks |
-| `eks.tf` | EKS 1.37 with API access entries, STANDARD support; vpc-cni (network policy + prefix delegation) and kube-proxy **before** the nodes, then 3 × m7i-flex.large via a launch template (110 pods/node, gp3, IMDSv2); coredns + metrics-server after |
+| `eks.tf` | EKS 1.37 with API access entries, STANDARD support; vpc-cni (network policy + prefix delegation) and kube-proxy **before** the nodes, then 3 × m7i-flex.large via a launch template (110 pods/node, gp3, IMDSv2); coredns, metrics-server and the EBS CSI driver (default gp3 StorageClass) after |
 
 If CloudShell drops during `apply`, open it again, `cd ~/CACIB/terraform`, run
 `terraform apply` again, and it continues. **Never delete `terraform.tfstate`**: it's the

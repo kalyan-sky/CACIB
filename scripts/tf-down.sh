@@ -27,6 +27,17 @@ if aws lambda get-function --function-name "$CLUSTER-portal" >/dev/null 2>&1 ||
 fi
 
 if k get --raw /readyz >/dev/null 2>&1; then
+  # EBS volumes created for PersistentVolumeClaims are not in Terraform either:
+  # delete the claims while the CSI driver can still delete their volumes.
+  if [ -n "$(k get pvc -A -o name 2>/dev/null)" ]; then
+    info "Deleting PersistentVolumeClaims (and their EBS volumes)"
+    for ns in $(k get pvc -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' | sort -u); do
+      k -n "$ns" scale deploy --all --replicas=0 >/dev/null 2>&1 || true
+      k -n "$ns" delete pvc --all --wait=true --timeout=180s >/dev/null 2>&1 || warn "PVCs in $ns not deleted"
+    done
+    for _ in $(seq 24); do [ -z "$(k get pv -o name 2>/dev/null)" ] && break; sleep 5; done
+  fi
+
   info "Deleting Kubernetes Services of type LoadBalancer (their AWS load balancers are not in Terraform)"
   lbs=$(k get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}')
   for svc in $lbs; do
@@ -48,6 +59,9 @@ fi
 info "terraform destroy (10-15 minutes)"
 terraform -chdir="$TF_DIR" destroy -auto-approve -input=false
 
+left=$(aws ec2 describe-volumes --filters "Name=tag:KubernetesCluster,Values=$CLUSTER" \
+  --query 'Volumes[].VolumeId' --output text 2>/dev/null)
+[ -z "$left" ] || warn "EBS volumes from this cluster still exist (they cost money): $left - delete them in EC2 > Volumes"
 kubectl config delete-context "$KUBE_CONTEXT" >/dev/null 2>&1 || true
 rm -f "$SIM_STATE/context" "$SIM_STATE/eks-region" "$SIM_STATE/gitops-remote"
 info "Done. The GitLab project and its container registry are untouched (free); delete them in GitLab if you want."
