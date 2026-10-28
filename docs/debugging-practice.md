@@ -38,6 +38,11 @@ kubectl -n payments debug -it deploy/payments-gateway --image=busybox:1.36 --tar
 ```
 (Without `--profile=restricted` the debug container is rejected. That's Pod Security working, and a good thing to explain.)
 
+## Level 0: classic Kubernetes cases (any cluster, free)
+
+Start here if a symptom like `CreateContainerConfigError` or `Init:0/1` isn't instantly familiar:
+`./k8s-classics.sh list`. There are 16 single-cause cases; see [`../classics/README.md`](../classics/README.md).
+
 ## Level 1: the ten tickets (repeat until each takes < 10 minutes)
 
 ```bash

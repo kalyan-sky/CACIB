@@ -46,7 +46,7 @@ python-and-scripts:
   script:
     - pip install -q -r requirements.txt
     - python -m unittest discover -s lambda/portal-edge
-    - for f in sim.sh scripts/*.sh scenarios/*/*.sh ci/*.sh; do bash -n "$f"; done
+    - for f in sim.sh k8s-classics.sh scripts/*.sh scenarios/*/*.sh ci/*.sh classics/*/*.sh; do bash -n "$f"; done
 
 manifests:
   stage: test
@@ -69,7 +69,7 @@ schemas:
   needs: [manifests]
   script:
     - go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
-    - $(go env GOPATH)/bin/kubeconform -strict -summary rendered/ platform/cluster-rbac.yaml
+    - $(go env GOPATH)/bin/kubeconform -strict -summary rendered/ platform/cluster-rbac.yaml classics/*/broken.yaml
 
 build-image:
   stage: build

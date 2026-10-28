@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache-warmer
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: cache-warmer}
+  template:
+    metadata:
+      labels: {app: cache-warmer}
+    spec:
+      containers:
+        - name: cache-warmer
+          image: python:3.12-alpine
+          command:
+            - python
+            - -c
+            - |
+              import time
+              cache = b"x" * (96 * 1024 * 1024)   # loads the 96 MB reference-data cache
+              print("cache warmed:", len(cache) // 1024 // 1024, "MB", flush=True)
+              time.sleep(36000)
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 200m, memory: 64Mi}

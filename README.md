@@ -25,6 +25,12 @@ incident note, with a timer.
  ...plus ~200 more services across 8 namespaces, each with an owner team, tier, cost centre and upstreams.
 ```
 
+## Classic Kubernetes debugging cases
+
+Sixteen generic incidents (CrashLoopBackOff, ImagePullBackOff, Pending, OOMKilled, probes,
+Services, DNS, RBAC, PVCs, init containers, CoreDNS) that run on any cluster, including the free
+Killercoda playground: `./k8s-classics.sh list`. See [`classics/README.md`](classics/README.md).
+
 ## Terraform + GitLab CI + Argo CD
 
 The same bank, run the way platform teams do it:

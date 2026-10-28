@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: frontend}
+  template:
+    metadata:
+      labels: {app: frontend}
+    spec:
+      containers:
+        - name: frontend
+          image: busybox:1.36
+          env:
+            - name: BACKEND_URL
+              value: http://backend
+          command:
+            - sh
+            - -c
+            - |
+              while true; do
+                if wget -qO- -T 3 "$BACKEND_URL" >/dev/null 2>&1; then echo "backend OK";
+                else echo "request to $BACKEND_URL failed: $(wget -qO- -T 3 "$BACKEND_URL" 2>&1 | head -1)"; fi
+                sleep 5
+              done
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 32Mi}

@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: reporter
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pod-reporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: pod-reporter}
+  template:
+    metadata:
+      labels: {app: pod-reporter}
+    spec:
+      serviceAccountName: reporter
+      containers:
+        - name: reporter
+          image: curlimages/curl:8.10.1
+          command:
+            - sh
+            - -c
+            - |
+              SA=/var/run/secrets/kubernetes.io/serviceaccount
+              while true; do
+                code=$$(curl -s -o /dev/null -w '%{http_code}' --cacert $SA/ca.crt \
+                  -H "Authorization: Bearer $$(cat $SA/token)" \
+                  "https://kubernetes.default.svc/api/v1/namespaces/$$(cat $SA/namespace)/pods")
+                echo "list pods in my namespace -> HTTP $code"
+                sleep 10
+              done
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 32Mi}
