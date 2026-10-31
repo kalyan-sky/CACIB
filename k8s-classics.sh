@@ -29,7 +29,7 @@ case_dir() {
   [ -n "$d" ] || die "no case '$1' (see ./k8s-classics.sh list)"
   echo "$d"
 }
-meta() { (source "$1/case.env" && eval "echo \"\$$2\""); }
+meta() { (source "$1/case.env" && eval "echo \"\${$2:-}\""); }
 ns_of() { basename "$1"; } # each case runs in a namespace named after its folder
 show() { if command -v glow >/dev/null 2>&1; then glow "$1"; else cat "$1"; fi; }
 
