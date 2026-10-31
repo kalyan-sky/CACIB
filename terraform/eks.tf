@@ -204,7 +204,7 @@ resource "aws_eks_addon" "coredns" {
   cluster_name = aws_eks_cluster.this.name
   addon_name   = "coredns"
   # without this, CoreDNS pods ask for EC2 nodes and stay Pending on Fargate
-  configuration_values        = local.fargate ? jsonencode({ computeType = "Fargate" }) : null
+  configuration_values        = jsonencode(local.fargate ? { computeType = "Fargate" } : {})
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "PRESERVE"
 
