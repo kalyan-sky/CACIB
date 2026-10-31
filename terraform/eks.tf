@@ -240,7 +240,8 @@ resource "aws_eks_addon" "ebs_csi" {
 # Extra cluster admins, e.g. your console identity, so the EKS console's
 # Resources tab works when terraform runs from the jump host under another identity.
 resource "aws_eks_access_entry" "admins" {
-  for_each = toset(var.admin_principal_arns)
+  # the identity running terraform already has an entry (bootstrap_cluster_creator_admin_permissions)
+  for_each = toset([for arn in var.admin_principal_arns : arn if arn != data.aws_caller_identity.current.arn])
 
   cluster_name  = aws_eks_cluster.this.name
   principal_arn = each.value
