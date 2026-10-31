@@ -10,6 +10,16 @@ output "kubernetes_version" {
   value = aws_eks_cluster.this.version
 }
 
+output "compute" {
+  description = "ec2 (managed node group) or fargate"
+  value       = var.compute
+}
+
+output "api_allowed_cidrs" {
+  description = "Who can reach the Kubernetes API (public endpoint)"
+  value       = var.api_public_cidrs
+}
+
 output "vpc_id" {
   value = aws_vpc.this.id
 }

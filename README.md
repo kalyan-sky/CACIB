@@ -40,6 +40,7 @@ The same bank, run the way platform teams do it:
 
 Step-by-step: [`docs/terraform-gitlab-argocd.md`](docs/terraform-gitlab-argocd.md).
 Practice drills for incidents, GitOps and AWS failures: [`docs/debugging-practice.md`](docs/debugging-practice.md).
+Through a jump host and on Fargate instead of EC2 nodes (`compute = "fargate"`): [`docs/jump-host-fargate.md`](docs/jump-host-fargate.md).
 
 ## Corporate banking portal
 

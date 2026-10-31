@@ -24,6 +24,8 @@
 
 ## Next session
 
+**New setup:** work from the GCP jump host, on Fargate. See `docs/jump-host-fargate.md`.
+
 1. `cd ~/CACIB/terraform && terraform init && terraform apply` (only if the cluster was destroyed), then
    run the `update-kubeconfig` command that `terraform output` prints
 2. `./k8s-classics.sh list`, then `start c04`. Look for the `FailedScheduling` event and compare the pod's CPU request with the node's allocatable CPU.

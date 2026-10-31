@@ -49,6 +49,9 @@ That gives you a real 2-node kubeadm cluster for about an hour per session; star
 each case (console views, EBS, security groups, load balancer subnets). See
 [`../docs/aws-hands-on.md`](../docs/aws-hands-on.md). Costs about USD 0.45/hour from credits.
 
+**EKS on Fargate** (through a jump host): see [`../docs/jump-host-fargate.md`](../docs/jump-host-fargate.md).
+c05, c06 and c14 need real nodes, so `start` skips them on a cluster with Fargate only.
+
 Needs: `bash`, `kubectl` pointed at the cluster, and internet access for the images.
 
 ## How to practise

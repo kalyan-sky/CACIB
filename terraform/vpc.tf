@@ -1,6 +1,7 @@
 # Network: one VPC over three availability zones.
 #   public  subnets - worker nodes (public IPs, so they can pull images without a NAT gateway)
-#   private subnets - internal load balancers and the portal's Lambda (no internet route by default)
+#   private subnets - Fargate pods, internal load balancers and the portal's Lambda
+#                     (internet through a NAT gateway only in Fargate mode, or if enabled)
 
 data "aws_availability_zones" "available" {
   state = "available"
@@ -13,6 +14,9 @@ data "aws_availability_zones" "available" {
 
 locals {
   azs = slice(sort(data.aws_availability_zones.available.names), 0, 3)
+
+  # Fargate pods have no public IP: they pull images through the NAT gateway.
+  nat_gateway = var.enable_nat_gateway || var.compute == "fargate"
 }
 
 resource "aws_vpc" "this" {
@@ -75,13 +79,13 @@ resource "aws_route_table_association" "public" {
 }
 
 resource "aws_eip" "nat" {
-  count  = var.enable_nat_gateway ? 1 : 0
+  count  = local.nat_gateway ? 1 : 0
   domain = "vpc"
   tags   = { Name = "${var.cluster_name}-nat" }
 }
 
 resource "aws_nat_gateway" "this" {
-  count         = var.enable_nat_gateway ? 1 : 0
+  count         = local.nat_gateway ? 1 : 0
   allocation_id = aws_eip.nat[0].id
   subnet_id     = aws_subnet.public[0].id
   tags          = { Name = "${var.cluster_name}-nat" }
@@ -95,7 +99,7 @@ resource "aws_route_table" "private" {
 }
 
 resource "aws_route" "private_nat" {
-  count                  = var.enable_nat_gateway ? 1 : 0
+  count                  = local.nat_gateway ? 1 : 0
   route_table_id         = aws_route_table.private.id
   destination_cidr_block = "0.0.0.0/0"
   nat_gateway_id         = aws_nat_gateway.this[0].id

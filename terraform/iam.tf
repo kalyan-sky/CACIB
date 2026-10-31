@@ -52,7 +52,38 @@ resource "aws_iam_role_policy_attachment" "node" {
 # controller reaches them through the instance metadata service, which is why
 # the launch template allows a hop limit of 2.
 resource "aws_iam_role_policy_attachment" "node_ebs_csi" {
-  count      = var.enable_ebs_csi_driver ? 1 : 0
+  count      = var.enable_ebs_csi_driver && var.compute == "ec2" ? 1 : 0
   role       = aws_iam_role.node.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}
+
+# Fargate pod execution role: what Fargate itself uses to pull images and
+# register its micro-VMs with the cluster (not what the pod's code runs as).
+data "aws_caller_identity" "current" {}
+
+data "aws_iam_policy_document" "fargate_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["eks-fargate-pods.amazonaws.com"]
+    }
+    condition { # only Fargate profiles of this cluster may use it
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:eks:${var.region}:${data.aws_caller_identity.current.account_id}:fargateprofile/${var.cluster_name}/*"]
+    }
+  }
+}
+
+resource "aws_iam_role" "fargate" {
+  count              = var.compute == "fargate" ? 1 : 0
+  name               = "${var.cluster_name}-fargate-pods"
+  assume_role_policy = data.aws_iam_policy_document.fargate_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "fargate" {
+  count      = var.compute == "fargate" ? 1 : 0
+  role       = aws_iam_role.fargate[0].name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
 }

@@ -4,3 +4,12 @@ cluster_name       = "bank-sim"
 kubernetes_version = "1.37"
 instance_type      = "m7i-flex.large" # must be free-tier eligible on an AWS Free plan account
 node_count         = 3
+
+# Jump host: only the jump host may reach the Kubernetes API.
+# api_public_cidrs = ["<jump host static IP>/32"]
+
+# Fargate instead of EC2 nodes (adds a NAT gateway; no EBS volumes, NetworkPolicies or DaemonSets).
+# compute = "fargate"
+
+# Also give your AWS console identity cluster-admin (aws sts get-caller-identity in CloudShell).
+# admin_principal_arns = ["arn:aws:iam::123456789012:user/console-user"]

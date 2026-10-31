@@ -48,6 +48,10 @@ render() {
   rm -f "$tmp" "$tmp.bak"
 }
 
+# EC2 worker nodes (Fargate's per-pod virtual nodes don't count)
+has_ec2_nodes() { k get nodes -l 'eks.amazonaws.com/compute-type!=fargate' -o name 2>/dev/null | grep -q .; }
+needs_nodes() { [ "$(meta "$1" NEEDS_NODES)" = 1 ]; }
+
 need_cluster() {
   [ -n "$KUBE_CONTEXT" ] || die "no kubectl context - create a cluster first (kind create cluster, or a Killercoda playground)"
   k get --raw /readyz >/dev/null 2>&1 || die "cluster '$KUBE_CONTEXT' is not reachable"
@@ -70,6 +74,9 @@ cmd_start() {
   local d id ns
   d=$(case_dir "${1:-}"); id=$(basename "$d" | cut -d- -f1); ns=$(ns_of "$d")
   need_cluster
+  if needs_nodes "$d" && ! has_ec2_nodes; then
+    die "$id needs EC2 worker nodes, and this cluster has none (Fargate). Skip it, or use compute = \"ec2\"."
+  fi
   info "Setting up $id in namespace $ns ..."
   k delete namespace "$ns" --ignore-not-found --wait=true >/dev/null 2>&1 || true
   [ -x "$d/reset.sh" ] && NS="$ns" bash "$d/reset.sh" >/dev/null 2>&1 || true
@@ -121,9 +128,12 @@ cmd_reset() {
 }
 
 cmd_page() {
-  local open=()
+  local open=() nodes=1
+  need_cluster
+  has_ec2_nodes || nodes=0
   for d in "$CASES"/c*/; do
     local id; id=$(basename "${d%/}" | cut -d- -f1)
+    [ "$nodes" = 0 ] && needs_nodes "${d%/}" && continue
     [ -f "$STATE/$id.solved" ] || open+=("$id")
   done
   [ "${#open[@]}" -gt 0 ] || die "all cases solved - reset one to replay it"
