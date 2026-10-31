@@ -57,7 +57,7 @@ check_result() {
   if [ "$FAILED" = 0 ]; then
     printf '%s%sPASS%s - all acceptance criteria met.\n' "$C_BLD" "$C_GRN" "$C_RST"
   else
-    printf '%s%sNOT YET%s - keep going (./sim.sh hint <id> if stuck).\n' "$C_BLD" "$C_RED" "$C_RST"
+    printf '%s%sNOT YET%s - keep going (hint: ./sim.sh hint <id>, or ./k8s-classics.sh hint <id> for the classics).\n' "$C_BLD" "$C_RED" "$C_RST"
   fi
   return "$FAILED"
 }
