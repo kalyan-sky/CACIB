@@ -9,7 +9,7 @@
 #
 # Optional:
 #   DASHBOARD_IP=<laptop IP>  open the dashboard on an HTTPS load balancer for that IP only
-#   IMAGE=<image>             skip the build and deploy this image
+#   SRE_AGENT_IMAGE=<image>   skip the build and deploy this image
 #   APPROVER=<name>           dashboard user with the approver role (default: your Linux user)
 #   ENVIRONMENT=prod|uat|dev  environment name in incidents and email routing (default: dev)
 source "$(dirname "$0")/lib.sh"
@@ -33,16 +33,18 @@ k get namespace monitoring >/dev/null 2>&1 || die "the monitoring stack is not i
 DEPLOY="$ROOT/apps/sre-agent/deploy"
 
 # ------------------------------------------------------------------ image
-if [ -z "${IMAGE:-}" ]; then
+# Not $IMAGE: lib.sh sets that to the bank's txn-service image.
+AGENT_IMAGE="${SRE_AGENT_IMAGE:-}"
+if [ -z "$AGENT_IMAGE" ]; then
   python3 -m pip --version >/dev/null 2>&1 || die "pip is needed to build the image: sudo apt-get install -y python3-pip"
   account=$(aws sts get-caller-identity --query Account --output text)
   repo="$account.dkr.ecr.$REGION.amazonaws.com/sre-agent"
   aws ecr describe-repositories --repository-names sre-agent --region "$REGION" >/dev/null 2>&1 ||
     aws ecr create-repository --repository-name sre-agent --region "$REGION" \
       --image-scanning-configuration scanOnPush=true --image-tag-mutability IMMUTABLE >/dev/null
-  IMAGE="$repo:$(git -C "$ROOT" rev-parse --short HEAD)-$(date +%Y%m%d%H%M)"
-  info "Building $IMAGE"
-  "$ROOT/ci/build-sre-agent.sh" "$IMAGE"
+  AGENT_IMAGE="$repo:$(git -C "$ROOT" rev-parse --short HEAD)-$(date +%Y%m%d%H%M)"
+  info "Building $AGENT_IMAGE"
+  "$ROOT/ci/build-sre-agent.sh" "$AGENT_IMAGE"
 fi
 
 # ------------------------------------------------------------------ secrets (asked once, kept in Kubernetes)
@@ -112,7 +114,7 @@ fi
 
 info "Deploying the agent ($CLUSTER, environment $ENVIRONMENT)"
 for f in config.yaml deployment.yaml networkpolicy.yaml monitoring.yaml; do
-  sed -e "s#__IMAGE__#$IMAGE#" -e "s#__CLUSTER__#$CLUSTER#" -e "s#__ENVIRONMENT__#$ENVIRONMENT#" \
+  sed -e "s#__IMAGE__#$AGENT_IMAGE#" -e "s#__CLUSTER__#$CLUSTER#" -e "s#__ENVIRONMENT__#$ENVIRONMENT#" \
       -e "s#__SMTP_USER__#$SMTP_USER#" -e "s#__EMAIL_TO__#$EMAIL_TO#" -e "s#__DASHBOARD_URL__#$dashboard_url#" \
       "$DEPLOY/$f" | k apply -f - >/dev/null
 done
@@ -156,7 +158,7 @@ done
 
 cat <<MSG
 
-    SRE agent is running (read-only). Image: $IMAGE
+    SRE agent is running (read-only). Image: $AGENT_IMAGE
     Dashboard:  ${dashboard_url:-not exposed. On the jump host: kubectl -n sre-agent port-forward svc/sre-agent 8080}
                 user: $APPROVER (approver), the password you just chose
     Emails:     $EMAIL_TO (from $SMTP_USER), severity MEDIUM and above
