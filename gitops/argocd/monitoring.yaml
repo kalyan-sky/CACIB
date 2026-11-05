@@ -1,0 +1,105 @@
+# Platform monitoring: kube-prometheus-stack (Prometheus, Alertmanager,
+# Grafana, kube-state-metrics, node-exporter), deployed by Argo CD from the
+# upstream Helm chart. Installed by scripts/monitoring-up.sh, which fills in
+# __KPS_VERSION__ and adds the bank's alerts and dashboard (platform/monitoring/).
+#
+# A separate AppProject from the bank: the platform team may deploy
+# cluster-wide objects (CRDs, ClusterRoles, a node-exporter DaemonSet); the
+# bank-sim project may not.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  description: Platform add-ons owned by the platform team
+  sourceRepos:
+    - https://prometheus-community.github.io/helm-charts
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: monitoring
+    - server: https://kubernetes.default.svc
+      namespace: kube-system # Services for scraping the kubelet and CoreDNS
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: "__KPS_VERSION__" # pinned: upgrades are a reviewed change
+    helm:
+      releaseName: monitoring
+      valuesObject:
+        # EKS runs these for you and doesn't expose their metrics
+        kubeEtcd: {enabled: false}
+        kubeScheduler: {enabled: false}
+        kubeControllerManager: {enabled: false}
+        kubeProxy: {enabled: false} # listens on 127.0.0.1 on EKS nodes
+
+        prometheus:
+          prometheusSpec:
+            retention: 12h # emptyDir: the lab keeps no history between clusters
+            scrapeInterval: 30s
+            resources:
+              requests: {cpu: 200m, memory: 1Gi}
+              limits: {memory: 2Gi}
+            # pick up ServiceMonitors and rules from any namespace, not only this release
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+            # The bank's pods carry prometheus.io/scrape + prometheus.io/port annotations.
+            additionalScrapeConfigs:
+              - job_name: bank-apps
+                kubernetes_sd_configs:
+                  - role: pod
+                relabel_configs:
+                  - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                    action: keep
+                    regex: "true"
+                  - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                    regex: '([^:]+)(?::\d+)?;(\d+)'
+                    replacement: "$1:$2"
+                    target_label: __address__
+                  - source_labels: [__meta_kubernetes_namespace]
+                    target_label: namespace
+                  - source_labels: [__meta_kubernetes_pod_name]
+                    target_label: pod
+
+        alertmanager:
+          alertmanagerSpec:
+            resources:
+              requests: {cpu: 10m, memory: 32Mi}
+
+        grafana:
+          admin:
+            existingSecret: grafana-admin # created by scripts/monitoring-up.sh
+            userKey: admin-user
+            passwordKey: admin-password
+          defaultDashboardsTimezone: Asia/Singapore
+          persistence: {enabled: false}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true # platform add-ons: undo manual changes
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true # the CRDs are too large for client-side apply
+      - RespectIgnoreDifferences=true
+  ignoreDifferences: # the operator fills in its own webhook certificates
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      jqPathExpressions: [".webhooks[]?.clientConfig.caBundle"]
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jqPathExpressions: [".webhooks[]?.clientConfig.caBundle"]

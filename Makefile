@@ -6,7 +6,7 @@ CLUSTER ?= bank-sim
 IMAGE   ?= $(shell cat .sim-state/image 2>/dev/null || echo bank-sim/txn-service:1.5.0)
 CONTEXT ?= $(shell cat .sim-state/context 2>/dev/null || echo kind-$(CLUSTER))
 
-.PHONY: help up down eks-up eks-deploy eks-down tf-up gitops-bootstrap tf-down gitops-pull portal-lambda portal-lambda-down render apply diff build audit audit-offline capacity inventory status test
+.PHONY: help up down eks-up eks-deploy eks-down tf-up gitops-bootstrap monitoring tf-down gitops-pull portal-lambda portal-lambda-down render apply diff build audit audit-offline capacity inventory status test
 
 help: ## show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-14s %s\n", $$1, $$2}'
@@ -34,6 +34,9 @@ tf-up: ## Terraform: VPC + EKS + nodes + add-ons (~20 min), settings in terrafor
 
 gitops-bootstrap: ## install Argo CD and deploy the bank from the gitops branch (REPO_URL=, ARGOCD_UI_IP=)
 	./scripts/gitops-bootstrap.sh
+
+monitoring: ## Argo CD installs Prometheus + Grafana; UI_IP=<your browser's public IP> opens Grafana to it
+	UI_IP=$(UI_IP) ./scripts/monitoring-up.sh
 
 tf-down: ## destroy the Terraform environment (removes Lambda + load balancers first)
 	./scripts/tf-down.sh

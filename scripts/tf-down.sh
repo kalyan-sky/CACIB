@@ -38,6 +38,9 @@ if k get --raw /readyz >/dev/null 2>&1; then
     for _ in $(seq 24); do [ -z "$(k get pv -o name 2>/dev/null)" ] && break; sleep 5; done
   fi
 
+  # Stop Argo CD first, so self-healing apps don't recreate what we delete next.
+  k -n argocd scale statefulset argocd-application-controller --replicas=0 >/dev/null 2>&1 || true
+
   info "Deleting Kubernetes Services of type LoadBalancer (their AWS load balancers are not in Terraform)"
   lbs=$(k get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}')
   for svc in $lbs; do

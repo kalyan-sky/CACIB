@@ -41,6 +41,7 @@ APPROVED_REGISTRY = re.compile(r"^(bank-sim/|registry\.bank\.local/|\d{12}\.dkr\
 SIM_STATE = os.path.join(ROOT, ".sim-state")
 LITE_FILLERS_PER_DOMAIN = 5
 TRAFFIC_NS = "sim-traffic"
+MONITORING_NS = "monitoring"
 ZONE_KEY = "topology.kubernetes.io/zone"
 
 DEFAULT_REQ = {"cpu": "10m", "memory": "16Mi"}
@@ -293,6 +294,13 @@ def render_namespace(ns, dom, apps, consumers):
          "spec": {"podSelector": {"matchLabels": {"bank.sim/exposure": "edge"}}, "policyTypes": ["Ingress"],
                   "ingress": [{"from": [{"namespaceSelector": {"matchLabels": {
                       "kubernetes.io/metadata.name": TRAFFIC_NS}}}]}]}},
+        # Prometheus (namespace "monitoring", scripts/monitoring-up.sh) scrapes /metrics on the app port.
+        {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+         "metadata": {"name": "allow-from-monitoring", "namespace": ns},
+         "spec": {"podSelector": {}, "policyTypes": ["Ingress"],
+                  "ingress": [{"from": [{"namespaceSelector": {"matchLabels": {
+                      "kubernetes.io/metadata.name": MONITORING_NS}}}],
+                      "ports": [{"protocol": "TCP", "port": 8080}]}]}},
     ]
     if consumers:
         docs.append({
@@ -446,7 +454,7 @@ CONTROLS = {
 REQUIRED_LABELS = ["bank.sim/owner-team", "bank.sim/tier", "bank.sim/cost-centre", "bank.sim/data-classification"]
 # Platform tooling namespaces follow their vendor's hardening baseline, not the
 # application controls below.
-SKIP_NS = {"kube-system", "kube-public", "kube-node-lease", "local-path-storage", "argocd", TRAFFIC_NS}
+SKIP_NS = {"kube-system", "kube-public", "kube-node-lease", "local-path-storage", "argocd", MONITORING_NS, TRAFFIC_NS}
 
 
 def load_objects(args):

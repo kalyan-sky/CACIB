@@ -1,0 +1,39 @@
+# Bank alerts, picked up by Prometheus next to the chart's Kubernetes alerts.
+# Applied by scripts/monitoring-up.sh.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: bank-sim
+  namespace: monitoring
+spec:
+  groups:
+    - name: bank-transactions
+      rules:
+        - record: bank:txn_requests:rate5m
+          expr: sum by (namespace, app) (rate(txn_requests_total[5m]))
+        - record: bank:txn_failures:ratio5m
+          expr: |
+            sum by (namespace, app) (rate(txn_failures_total[5m]))
+              / sum by (namespace, app) (rate(txn_requests_total[5m]))
+        - record: bank:txn_latency_ms:avg5m
+          expr: |
+            sum by (namespace, app) (rate(txn_latency_ms_sum[5m]))
+              / sum by (namespace, app) (rate(txn_requests_total[5m]))
+        - alert: BankAppHighFailureRate
+          expr: bank:txn_failures:ratio5m > 0.05
+          for: 5m
+          labels: {severity: critical}
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.app }} fails {{ $value | humanizePercentage }} of transactions"
+        - alert: BankAppSlow
+          expr: bank:txn_latency_ms:avg5m > 1000
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.app }} averages {{ $value | humanize }} ms per transaction"
+        - alert: BankAppDown
+          expr: up{job="bank-apps"} == 0
+          for: 2m
+          labels: {severity: critical}
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} is not answering /metrics"
