@@ -8,6 +8,8 @@
 - [x] Practice cluster rebuilt with Terraform: 3 nodes on 1.37, EBS CSI driver, default storage class `ebs-csi-default-sc`.
 - [x] GCP VM `air-gap-singapore` set up as the jump host (static IP 34.87.82.120). The EKS API allowed only that IP; CloudShell could not reach it.
 - [x] EKS on Fargate with Terraform (`compute = "fargate"`): Fargate profiles, CoreDNS on Fargate, NAT gateway. Destroyed afterwards.
+- [x] Full bank on EC2 nodes through the jump host: Argo CD (bank-sim + monitoring apps), Prometheus/Grafana with the bank dashboard.
+- [x] Read-only SRE agent live (`make sre-agent-up`): 25/25 RBAC can-i checks passed, Alertmanager routes to it, the c07 OOMKilled test incident was investigated and the email arrived in Gmail.
 
 ## Classic cases (`./k8s-classics.sh`)
 
