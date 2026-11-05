@@ -55,15 +55,23 @@ info "Agent health"
 # Through a port-forward: the agent's NetworkPolicy only admits the monitoring namespace,
 # so the API server's service proxy can't reach it (and would hang).
 port=$((20000 + RANDOM % 20000))
-k -n sre-agent port-forward svc/sre-agent "$port:8080" >/dev/null 2>&1 &
+pflog=$(mktemp)
+k -n sre-agent port-forward svc/sre-agent "$port:8080" >"$pflog" 2>&1 &
 pf=$!
-trap 'kill $pf 2>/dev/null || true' EXIT
-for _ in $(seq 20); do curl -s -m 2 "http://127.0.0.1:$port/healthz" >/dev/null 2>&1 && break; sleep 0.5; done
-health=$(curl -s -m 5 "http://127.0.0.1:$port/healthz" || true)
-[[ "$health" == *ok* ]] && ok "agent answers /healthz" || ko "agent does not answer (kubectl -n sre-agent logs deploy/sre-agent)"
+trap 'kill $pf 2>/dev/null || true; rm -f "$pflog"' EXIT
+for _ in $(seq 30); do grep -q "Forwarding from" "$pflog" && break; sleep 0.5; done
+health=""
+for _ in $(seq 5); do
+  health=$(curl -s -m 5 "http://127.0.0.1:$port/healthz" || true)
+  [[ "$health" == *ok* ]] && break
+  sleep 1
+done
+[[ "$health" == *ok* ]] && ok "agent answers /healthz" ||
+  ko "agent does not answer: $(tail -2 "$pflog" | tr '\n' ' ') (kubectl -n sre-agent logs deploy/sre-agent)"
 am=$(k get --raw "/api/v1/namespaces/monitoring/services/monitoring-kube-prometheus-alertmanager:9093/proxy/api/v2/status" \
   --request-timeout=15s 2>/dev/null || true)
-[[ "$am" == *sre-agent.sre-agent.svc* ]] && ok "Alertmanager routes alerts to the agent" ||
+# Alertmanager shows webhook URLs as <secret>, so look for the receiver and its token file
+[[ "$am" == *"name: sre-agent"* && "$am" == *sre-agent-webhook/token* ]] && ok "Alertmanager routes alerts to the agent" ||
   ko "Alertmanager config has no sre-agent receiver yet (Argo CD may still be syncing; re-run in a minute)"
 errs=$(curl -s -m 5 "http://127.0.0.1:$port/metrics" 2>/dev/null |
   awk '/^sre_agent_kubernetes_api_errors_total/ && /status="403"/ {s+=$2} END {print s+0}' || true)
