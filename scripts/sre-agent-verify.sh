@@ -52,14 +52,23 @@ print("  ✔ no other ClusterRoleBinding grants the agent anything" if not bad e
 sys.exit(1 if bad else 0)' || FAILED=1
 
 info "Agent health"
-health=$(k get --raw "/api/v1/namespaces/sre-agent/services/sre-agent:http/proxy/healthz" 2>/dev/null || true)
+# Through a port-forward: the agent's NetworkPolicy only admits the monitoring namespace,
+# so the API server's service proxy can't reach it (and would hang).
+port=$((20000 + RANDOM % 20000))
+k -n sre-agent port-forward svc/sre-agent "$port:8080" >/dev/null 2>&1 &
+pf=$!
+trap 'kill $pf 2>/dev/null || true' EXIT
+for _ in $(seq 20); do curl -s -m 2 "http://127.0.0.1:$port/healthz" >/dev/null 2>&1 && break; sleep 0.5; done
+health=$(curl -s -m 5 "http://127.0.0.1:$port/healthz" || true)
 [[ "$health" == *ok* ]] && ok "agent answers /healthz" || ko "agent does not answer (kubectl -n sre-agent logs deploy/sre-agent)"
-am=$(k get --raw "/api/v1/namespaces/monitoring/services/monitoring-kube-prometheus-alertmanager:9093/proxy/api/v2/status" 2>/dev/null || true)
+am=$(k get --raw "/api/v1/namespaces/monitoring/services/monitoring-kube-prometheus-alertmanager:9093/proxy/api/v2/status" \
+  --request-timeout=15s 2>/dev/null || true)
 [[ "$am" == *sre-agent.sre-agent.svc* ]] && ok "Alertmanager routes alerts to the agent" ||
   ko "Alertmanager config has no sre-agent receiver yet (Argo CD may still be syncing; re-run in a minute)"
-errs=$(k get --raw "/api/v1/namespaces/sre-agent/services/sre-agent:http/proxy/metrics" 2>/dev/null |
-  awk '/^sre_agent_kubernetes_api_errors_total/ && /status="403"/ {s+=$2} END {print s+0}')
+errs=$(curl -s -m 5 "http://127.0.0.1:$port/metrics" 2>/dev/null |
+  awk '/^sre_agent_kubernetes_api_errors_total/ && /status="403"/ {s+=$2} END {print s+0}' || true)
 [ "${errs:-0}" = 0 ] && ok "no 403s from the Kubernetes API so far" || warn "$errs Kubernetes 403s: RBAC is denying something the agent needs"
+kill $pf 2>/dev/null || true
 
 if [ "${1:-}" = "--incident" ]; then
   info "Test incident: classic case c07 (OOMKilled) in namespace c07-oomkilled"
