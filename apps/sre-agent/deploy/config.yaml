@@ -1,0 +1,27 @@
+# Non-secret settings. Secrets (SMTP password, webhook token, approver hashes) come from the
+# Secret sre-agent-secrets, mounted as files (see deployment.yaml). Filled in by scripts/sre-agent-up.sh.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sre-agent-config
+  namespace: sre-agent
+data:
+  SRE_AGENT_CLUSTER_NAME: "__CLUSTER__"
+  SRE_AGENT_CLUSTER_ENV: "__ENVIRONMENT__"
+  SRE_AGENT_IN_CLUSTER: "true"
+  SRE_AGENT_DB: /data/sre-agent.db
+  SRE_AGENT_SMTP_HOST: smtp.gmail.com
+  SRE_AGENT_SMTP_PORT: "587"
+  SRE_AGENT_SMTP_STARTTLS: "true"
+  SRE_AGENT_SMTP_USERNAME: "__SMTP_USER__"
+  SRE_AGENT_SMTP_FROM: "__SMTP_USER__"
+  SRE_AGENT_EMAIL_TO: "__EMAIL_TO__"
+  SRE_AGENT_EMAIL_MIN_SEVERITY: MEDIUM
+  SRE_AGENT_EMAIL_DEDUP_MINUTES: "60"
+  SRE_AGENT_APPROVAL_TTL_HOURS: "24"
+  SRE_AGENT_CRITICAL_NAMESPACES: payments,core-banking
+  SRE_AGENT_DASHBOARD_URL: "__DASHBOARD_URL__"
+  SRE_AGENT_LLM_PROVIDER: none
+  SRE_AGENT_MAX_CONCURRENT: "3"
+  SRE_AGENT_INVESTIGATION_TIMEOUT_SECONDS: "60"
+  SRE_AGENT_LOG_TAIL_LINES: "200"

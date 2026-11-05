@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}SRE agent{% endblock %} · Kubernetes SRE agent</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">Kubernetes SRE agent</a>
+  <span class="ro">read-only · advisory</span>
+  <span class="user">{{ user.name }} ({{ user.role }})</span>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer>v{{ version }} · The agent investigates and proposes. It never changes a cluster; approved fixes are run by engineers.</footer>
+</body>
+</html>

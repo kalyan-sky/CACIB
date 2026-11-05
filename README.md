@@ -41,6 +41,8 @@ The same bank, run the way platform teams do it:
 Step-by-step: [`docs/terraform-gitlab-argocd.md`](docs/terraform-gitlab-argocd.md).
 Practice drills for incidents, GitOps and AWS failures: [`docs/debugging-practice.md`](docs/debugging-practice.md).
 Prometheus + Grafana deployed by Argo CD, with a bank transactions dashboard: [`docs/monitoring.md`](docs/monitoring.md).
+A read-only SRE agent that investigates alerts, explains the root cause and emails a fix for human approval:
+[`docs/sre-agent.md`](docs/sre-agent.md).
 Through a jump host and on Fargate instead of EC2 nodes (`compute = "fargate"`): [`docs/jump-host-fargate.md`](docs/jump-host-fargate.md).
 
 ## Corporate banking portal

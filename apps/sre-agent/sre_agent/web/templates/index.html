@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Incidents{% endblock %}
+{% block content %}
+<section class="tiles">
+  <div class="tile"><b>{{ stats.total }}</b><span>Total incidents</span></div>
+  <div class="tile sev-CRITICAL"><b>{{ stats.critical }}</b><span>Critical (active)</span></div>
+  <div class="tile sev-HIGH"><b>{{ stats.high }}</b><span>High (active)</span></div>
+  <div class="tile"><b>{{ stats.active }}</b><span>Active</span></div>
+  <div class="tile"><b>{{ stats.resolved }}</b><span>Resolved</span></div>
+  <div class="tile"><b>{{ stats.pending_approvals }}</b><span>Pending approvals</span></div>
+</section>
+
+<section class="health">
+  <div>
+    <h2>Cluster health</h2>
+    <table>
+      <tr><th>Cluster</th><th>Active incidents</th></tr>
+      {% for c in clusters %}
+      <tr><td>{{ c }}</td><td>{% set n = stats.active_by_cluster.get(c, 0) %}<span class="pill {{ 'bad' if n else 'ok' }}">{{ n }}</span></td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  <div>
+    <h2>Namespaces with active incidents</h2>
+    <table>
+      <tr><th>Cluster / namespace</th><th>Active</th></tr>
+      {% for k, n in stats.active_by_namespace.items() %}<tr><td>{{ k }}</td><td><span class="pill bad">{{ n }}</span></td></tr>
+      {% else %}<tr><td colspan="2" class="muted">All namespaces healthy</td></tr>{% endfor %}
+    </table>
+  </div>
+  <div>
+    <h2>Pending approvals</h2>
+    <table>
+      {% for a in pending %}<tr><td><a href="/incidents/{{ a.incident_id }}">{{ a.incident_id }}</a></td><td class="muted">expires {{ a.expires_at[:16] }}</td></tr>
+      {% else %}<tr><td class="muted">None</td></tr>{% endfor %}
+    </table>
+  </div>
+</section>
+
+<form class="filters" method="get" action="/">
+  <label>Cluster <select name="cluster"><option value="">all</option>{% for c in clusters %}<option {{ 'selected' if f.cluster == c }}>{{ c }}</option>{% endfor %}</select></label>
+  <label>Namespace <input name="namespace" value="{{ f.namespace }}" size="14"></label>
+  <label>Severity <select name="severity"><option value="">all</option>{% for s in SEVERITIES %}<option {{ 'selected' if f.severity == s }}>{{ s }}</option>{% endfor %}</select></label>
+  <label>Type <input name="incident_type" value="{{ f.incident_type }}" size="16" placeholder="e.g. OOMKilled"></label>
+  <label>Status <select name="status"><option value="">all</option>{% for s in ["investigating","open","resolved","failed"] %}<option {{ 'selected' if f.status == s }}>{{ s }}</option>{% endfor %}</select></label>
+  <label>From <input type="date" name="since" value="{{ f.since }}"></label>
+  <label>To <input type="date" name="until" value="{{ f.until }}"></label>
+  <button type="submit">Filter</button> <a href="/">reset</a>
+</form>
+
+<table class="list">
+  <thead><tr><th>ID</th><th>Severity</th><th>Status</th><th>Cluster</th><th>Namespace</th><th>Type</th><th>Affected</th><th>Root cause</th><th>Created</th></tr></thead>
+  <tbody>
+  {% for i in incidents %}
+  {% set r = i.report or {} %}
+  <tr>
+    <td><a href="/incidents/{{ i.id }}">{{ i.id }}</a></td>
+    <td><span class="sev sev-{{ i.severity }}">{{ i.severity }}</span></td>
+    <td>{{ i.status }}</td>
+    <td>{{ i.cluster }}</td>
+    <td>{{ i.namespace or "-" }}</td>
+    <td>{{ i.incident_type }}</td>
+    <td class="small">{{ (r.affected_resources or [])[:3] | join(", ") }}</td>
+    <td class="small">{{ (r.root_cause or i.error or "investigating...")[:140] }}{% if r.root_cause_confidence is defined %} <span class="muted">({{ (r.root_cause_confidence * 100) | round | int }}%)</span>{% endif %}</td>
+    <td class="small">{{ i.created_at[:16] }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="9" class="muted">No incidents match.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

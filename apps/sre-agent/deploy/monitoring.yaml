@@ -1,0 +1,45 @@
+# Prometheus scrapes the agent, and alerts if the agent itself is unhealthy.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: sre-agent
+  namespace: sre-agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sre-agent
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: sre-agent
+  namespace: sre-agent
+spec:
+  groups:
+    - name: sre-agent
+      rules:
+        - alert: SreAgentDown
+          expr: absent(up{job="sre-agent"} == 1)
+          for: 5m
+          labels: {severity: critical, sre_severity: high}
+          annotations:
+            summary: "The SRE agent is not running: incidents are not being investigated"
+        - alert: SreAgentEmailFailing
+          expr: increase(sre_agent_email_delivery_failures_total[30m]) > 0
+          labels: {severity: warning}
+          annotations:
+            summary: "The SRE agent cannot send incident emails (check SMTP credentials)"
+        - alert: SreAgentKubernetesApiErrors
+          expr: sum(increase(sre_agent_kubernetes_api_errors_total{status=~"403|5..|.*Error.*"}[15m])) > 10
+          labels: {severity: warning}
+          annotations:
+            summary: "The SRE agent gets Kubernetes API errors (RBAC or API server problems)"
+        - alert: SreAgentInvestigationTimeouts
+          expr: increase(sre_agent_investigation_timeouts_total[30m]) > 2
+          labels: {severity: warning}
+          annotations:
+            summary: "SRE agent investigations are timing out"

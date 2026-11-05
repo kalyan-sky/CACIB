@@ -1,0 +1,126 @@
+# Incident alerts the SRE agent investigates, on top of kube-prometheus-stack's
+# built-in rules (KubePodCrashLooping, KubePodNotReady, KubeDeploymentReplicasMismatch,
+# KubeDeploymentRolloutStuck, KubeNodeNotReady, KubeNodeUnreachable, CPUThrottlingHigh,
+# KubeQuotaExceeded, KubePersistentVolumeFillingUp, KubePersistentVolumeErrors, ...).
+#
+# Thresholds: change the number in `expr` and the duration in `for`.
+#   severity: critical | warning | info   (the agent maps them to CRITICAL / HIGH or MEDIUM / INFO)
+#   sre_severity: set explicitly to override the mapping (critical, high, medium, low, info)
+# Applied by scripts/sre-agent-up.sh.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: k8s-incidents
+  namespace: monitoring
+spec:
+  groups:
+    - name: pods
+      rules:
+        - alert: PodOOMKilled
+          expr: |
+            (max by (namespace, pod, container) (kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}) == 1)
+            and on (namespace, pod, container)
+            (increase(kube_pod_container_status_restarts_total[15m]) > 0)
+          labels: {severity: critical}
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) was OOMKilled"
+        - alert: PodImagePullFailing
+          expr: max by (namespace, pod, container, reason) (kube_pod_container_status_waiting_reason{reason=~"ImagePullBackOff|ErrImagePull|InvalidImageName"}) == 1
+          for: 3m
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} cannot pull its image ({{ $labels.reason }})"
+        - alert: PodCreateContainerConfigError
+          expr: max by (namespace, pod, container) (kube_pod_container_status_waiting_reason{reason=~"CreateContainerConfigError|CreateContainerError"}) == 1
+          for: 2m
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} cannot create its container (Secret/ConfigMap reference)"
+        - alert: PodPendingTooLong
+          expr: max by (namespace, pod) (kube_pod_status_phase{phase="Pending"}) == 1
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} has been Pending for 10 minutes"
+        - alert: PodRestartSpike
+          expr: increase(kube_pod_container_status_restarts_total[15m]) > 3
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} restarted {{ $value | humanize }} times in 15 minutes"
+        - alert: PodStuckTerminating
+          expr: (time() - max by (namespace, pod) (kube_pod_deletion_timestamp)) > 600
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} has been terminating for over 10 minutes (finalizer or node problem)"
+        - alert: ContainerMemoryNearLimit
+          expr: |
+            max by (namespace, pod, container) (container_memory_working_set_bytes{container!="", image!=""})
+              / max by (namespace, pod, container) (kube_pod_container_resource_limits{resource="memory"}) > 0.9
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) uses {{ $value | humanizePercentage }} of its memory limit"
+        - alert: ExcessiveCPURequests
+          expr: |
+            sum by (namespace, pod) (kube_pod_container_resource_requests{resource="cpu"})
+              > 10 * sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!=""}[30m])) + 0.5
+          for: 6h
+          labels: {severity: info}
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} requests over 10x the CPU it uses (FinOps)"
+
+    - name: nodes
+      rules:
+        - alert: NodeMemoryPressure
+          expr: max by (node) (kube_node_status_condition{condition="MemoryPressure", status="true"}) == 1
+          for: 2m
+          labels: {severity: critical}
+          annotations: {summary: "Node {{ $labels.node }} has MemoryPressure"}
+        - alert: NodeDiskPressure
+          expr: max by (node) (kube_node_status_condition{condition="DiskPressure", status="true"}) == 1
+          for: 2m
+          labels: {severity: critical}
+          annotations: {summary: "Node {{ $labels.node }} has DiskPressure"}
+        - alert: NodePIDPressure
+          expr: max by (node) (kube_node_status_condition{condition="PIDPressure", status="true"}) == 1
+          for: 2m
+          labels: {severity: critical}
+          annotations: {summary: "Node {{ $labels.node }} has PIDPressure"}
+        - alert: NodeHighCPU
+          expr: label_replace(1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])), "node", "$1", "instance", "(.*)") > 0.90
+          for: 15m
+          labels: {severity: warning}
+          annotations: {summary: "Node {{ $labels.node }} CPU at {{ $value | humanizePercentage }}"}
+        - alert: NodeHighMemory
+          expr: label_replace(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes, "node", "$1", "instance", "(.*)") > 0.90
+          for: 15m
+          labels: {severity: warning}
+          annotations: {summary: "Node {{ $labels.node }} memory at {{ $value | humanizePercentage }}"}
+
+    - name: storage
+      rules:
+        - alert: PVCPending
+          expr: max by (namespace, persistentvolumeclaim) (kube_persistentvolumeclaim_status_phase{phase="Pending"}) == 1
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has been Pending for 5 minutes"}
+        - alert: PersistentVolumeFailed
+          expr: max by (persistentvolume) (kube_persistentvolume_status_phase{phase="Failed"}) == 1
+          for: 5m
+          labels: {severity: critical}
+          annotations: {summary: "PersistentVolume {{ $labels.persistentvolume }} is Failed"}
+
+    - name: dns
+      rules:
+        - alert: CoreDNSDown
+          expr: max(kube_deployment_status_replicas_available{namespace="kube-system", deployment="coredns"}) == 0
+          for: 1m
+          labels: {severity: critical, namespace: kube-system, deployment: coredns}
+          annotations: {summary: "CoreDNS has no available replicas: cluster DNS is down"}
+        - alert: CoreDNSErrorsHigh
+          expr: |
+            sum(rate(coredns_dns_responses_total{rcode="SERVFAIL"}[5m]))
+              / sum(rate(coredns_dns_responses_total[5m])) > 0.05
+          for: 5m
+          labels: {severity: warning, namespace: kube-system, deployment: coredns}
+          annotations: {summary: "CoreDNS answers {{ $value | humanizePercentage }} of queries with SERVFAIL"}

@@ -1,0 +1,31 @@
+# Who may talk to the agent, and where it may connect.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sre-agent
+  namespace: sre-agent
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: sre-agent
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: # Alertmanager (webhook) and Prometheus (metrics)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - {protocol: TCP, port: 8080}
+    - ports: # dashboard over TLS; the load balancer's security group allows one IP only
+        - {protocol: TCP, port: 8443}
+  egress:
+    - to: # cluster DNS
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - ports:
+        - {protocol: TCP, port: 443} # Kubernetes API (EKS endpoint) and an optional LLM API
+        - {protocol: TCP, port: 587} # SMTP submission (STARTTLS)

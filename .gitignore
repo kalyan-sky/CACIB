@@ -7,3 +7,5 @@ terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/terraform.tfvars
 terraform/tfplan
+.venv-sre-agent/
+.pytest_cache/

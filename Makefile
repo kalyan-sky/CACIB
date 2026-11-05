@@ -6,7 +6,7 @@ CLUSTER ?= bank-sim
 IMAGE   ?= $(shell cat .sim-state/image 2>/dev/null || echo bank-sim/txn-service:1.5.0)
 CONTEXT ?= $(shell cat .sim-state/context 2>/dev/null || echo kind-$(CLUSTER))
 
-.PHONY: help up down eks-up eks-deploy eks-down tf-up gitops-bootstrap monitoring tf-down gitops-pull portal-lambda portal-lambda-down render apply diff build audit audit-offline capacity inventory status test
+.PHONY: help up down eks-up eks-deploy eks-down tf-up gitops-bootstrap monitoring sre-agent-test sre-agent-up sre-agent-verify sre-agent-down tf-down gitops-pull portal-lambda portal-lambda-down render apply diff build audit audit-offline capacity inventory status test
 
 help: ## show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-14s %s\n", $$1, $$2}'
@@ -37,6 +37,20 @@ gitops-bootstrap: ## install Argo CD and deploy the bank from the gitops branch 
 
 monitoring: ## Argo CD installs Prometheus + Grafana; UI_IP=<your browser's public IP> opens Grafana to it
 	UI_IP=$(UI_IP) ./scripts/monitoring-up.sh
+
+sre-agent-test: ## SRE agent: unit + integration tests in a local virtualenv (no cluster needed)
+	test -d .venv-sre-agent || python3 -m venv .venv-sre-agent
+	.venv-sre-agent/bin/pip install -q -r apps/sre-agent/requirements-dev.txt
+	cd apps/sre-agent && ../../.venv-sre-agent/bin/python -m pytest -q -p no:warnings
+
+sre-agent-up: ## SRE agent: build, deploy read-only, route Alertmanager to it; SMTP_USER= EMAIL_TO= [DASHBOARD_IP=]
+	SMTP_USER=$(SMTP_USER) EMAIL_TO=$(EMAIL_TO) DASHBOARD_IP=$(DASHBOARD_IP) ./scripts/sre-agent-up.sh
+
+sre-agent-verify: ## SRE agent: RBAC can-i checks, health, routing; ARGS=--incident also runs a test incident
+	./scripts/sre-agent-verify.sh $(ARGS)
+
+sre-agent-down: ## SRE agent: remove it and its Alertmanager routing
+	./scripts/sre-agent-down.sh
 
 tf-down: ## destroy the Terraform environment (removes Lambda + load balancers first)
 	./scripts/tf-down.sh

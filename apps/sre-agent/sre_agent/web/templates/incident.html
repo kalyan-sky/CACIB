@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}{{ inc.id }}{% endblock %}
+{% block content %}
+<p><a href="/">&larr; all incidents</a></p>
+<h1><span class="sev sev-{{ inc.severity }}">{{ inc.severity }}</span> {{ inc.id }} · {{ inc.incident_type }} <span class="muted">({{ inc.status }})</span></h1>
+<p class="muted">Cluster <b>{{ inc.cluster }}</b> ({{ inc.environment }}) · namespace <b>{{ inc.namespace or "-" }}</b> · alerts {{ inc.alertnames | join(", ") }} · seen {{ inc.occurrences }}x · created {{ inc.created_at }} · email {{ inc.email_status }}</p>
+{% if inc.error %}<p class="warn">{{ inc.error }}</p>{% endif %}
+
+{% if r %}
+<section class="card">
+  <h2>Summary</h2>
+  <p>{{ r.incident_summary }}</p>
+  <p class="muted">{{ r.business_impact }}</p>
+  <p class="small">Affected: {{ r.affected_resources | join(", ") or "-" }}</p>
+</section>
+<section class="card">
+  <h2>Root cause <span class="pill {{ 'ok' if r.root_cause_status == 'confirmed' else ('mid' if r.root_cause_status == 'probable' else 'bad') }}">{{ r.root_cause_status }} · {{ (r.root_cause_confidence * 100) | round | int }}%</span></h2>
+  <p>{{ r.root_cause }}</p>
+  <h3>Supporting evidence (observed)</h3>
+  <ul>{% for e in r.supporting_evidence %}<li><code>{{ e.source }}</code> {{ e.observation }}</li>{% else %}<li class="muted">None</li>{% endfor %}</ul>
+  {% if r.possible_contributing_factors %}<h3>Possible contributing factors (hypotheses)</h3>
+  <ul>{% for f in r.possible_contributing_factors %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
+  {% if r.symptoms %}<h3>Symptoms</h3><ul>{% for s in r.symptoms %}<li>{{ s }}</li>{% endfor %}</ul>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Resolution guide</h2>
+  {% if r.prerequisites %}<p><b>Prerequisites:</b> {{ r.prerequisites | join("; ") }}</p>{% endif %}
+  {% for step in r.resolution_steps %}
+  <h3>{{ step.title }}</h3>
+  {% if step.explanation %}<p class="muted">{{ step.explanation }}</p>{% endif %}
+  {% for c in step.commands %}
+  <div class="cmd kind-{{ c.kind }}">
+    <div class="kind">{{ KIND_LABELS[c.kind] }}</div>
+    <pre>{{ c.command }}</pre>
+    {% if c.explanation %}<div>{{ c.explanation }}</div>{% endif %}
+    {% if c.expected_output %}<div class="muted">Expected: {{ c.expected_output }}</div>{% endif %}
+  </div>
+  {% endfor %}
+  {% endfor %}
+  {% if r.expected_outcome %}<p><b>Expected outcome:</b> {{ r.expected_outcome }}</p>{% endif %}
+  <p><b>Risk:</b> {{ r.risk_assessment or "-" }}</p>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Approval</h2>
+  <p class="muted">Approving records that you accept the proposed resolution. It does not run anything: you execute the commands yourself.</p>
+  {% for a in approvals %}
+  <div class="approval">
+    <p><b>#{{ a.id }}</b> <span class="pill {{ 'mid' if a.status == 'Pending' else ('ok' if a.status == 'Approved' else 'bad') }}">{{ a.status }}</span>
+      {% if a.approver %} by {{ a.approver }} at {{ a.decided_at }}{% endif %} · expires {{ a.expires_at }}</p>
+    <pre>{{ a.proposed_action }}</pre>
+    {% if a.rejection_reason %}<p>Rejection reason: {{ a.rejection_reason }}</p>{% endif %}
+    {% if a.comment %}<p>Comment: {{ a.comment }}</p>{% endif %}
+    {% if a.status == 'Pending' and user.can_approve %}
+    <form method="post" action="/incidents/{{ inc.id }}/approvals/{{ a.id }}" class="decide">
+      <input type="hidden" name="csrf" value="{{ tokens[a.id] }}">
+      <label>Comment <input name="comment" size="40"></label>
+      <label>Rejection reason <input name="reason" size="30"></label>
+      <button name="decision" value="approve">Approve</button>
+      <button name="decision" value="reject" class="secondary">Reject</button>
+    </form>
+    {% endif %}
+  </div>
+  {% else %}<p class="muted">No remediation was proposed, so nothing needs approval.</p>{% endfor %}
+</section>
+
+<section class="card">
+  <h2>Investigation evidence</h2>
+  <p class="small muted">Collected read-only in {{ evidence.duration_seconds }} s{% if evidence.truncated %}; truncated by limits{% endif %}.
+  Engine: {{ r.analysis_engine if r else "-" }}. {% if r and r.analysis_notes %}Notes: {{ r.analysis_notes | join("; ") }}{% endif %}</p>
+  <details open><summary>Commands executed by the agent (read-only)</summary><pre>{% for c in evidence.commands_executed or [] %}{{ c }}
+{% endfor %}</pre></details>
+  {% if evidence.errors %}<details open><summary>Evidence gaps</summary><ul>{% for e in evidence.errors %}<li>{{ e }}</li>{% endfor %}</ul></details>{% endif %}
+  <details><summary>Events ({{ (evidence.events or []) | length }})</summary>
+    <table><tr><th>Last seen</th><th>Type</th><th>Reason</th><th>Object</th><th>Message</th></tr>
+    {% for e in evidence.events or [] %}<tr><td class="small">{{ e.last_seen }}</td><td>{{ e.type }}</td><td>{{ e.reason }}</td><td class="small">{{ e.object }}</td><td class="small">{{ e.message }}</td></tr>{% endfor %}</table></details>
+  {% for key, text in (evidence.logs or {}).items() %}
+  <details><summary>Logs {{ key }}</summary><pre class="logs">{{ text }}</pre></details>
+  {% endfor %}
+  <details><summary>Pods</summary><pre>{{ evidence.pods | tojson(indent=2) }}</pre></details>
+  {% if evidence.deployment %}<details><summary>Deployment</summary><pre>{{ evidence.deployment | tojson(indent=2) }}</pre></details>{% endif %}
+  {% if evidence.nodes %}<details><summary>Nodes</summary><pre>{{ evidence.nodes | tojson(indent=2) }}</pre></details>{% endif %}
+  {% if evidence.metrics %}<details><summary>Metrics</summary><pre>{{ evidence.metrics | tojson(indent=2) }}</pre></details>{% endif %}
+  {% if r %}<details><summary>Full report (JSON)</summary><pre>{{ r.model_dump() | tojson(indent=2) }}</pre></details>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Audit log</h2>
+  <table><tr><th>Time</th><th>Actor</th><th>Action</th><th>Details</th></tr>
+  {% for a in audit %}<tr><td class="small">{{ a.ts }}</td><td>{{ a.actor }}</td><td>{{ a.action }}</td><td class="small">{{ a.details }}</td></tr>{% endfor %}</table>
+</section>
+{% endblock %}

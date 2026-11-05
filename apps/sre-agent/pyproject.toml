@@ -1,0 +1,9 @@
+[project]
+name = "sre-agent"
+version = "0.1.0"
+description = "Read-only Kubernetes SRE agent: investigates alerts, explains the root cause, proposes fixes for human approval"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

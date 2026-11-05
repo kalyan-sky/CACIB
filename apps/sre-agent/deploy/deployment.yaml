@@ -1,0 +1,105 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sre-agent-data
+  namespace: sre-agent
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sre-agent
+  namespace: sre-agent
+  labels:
+    app.kubernetes.io/name: sre-agent
+spec:
+  replicas: 1 # SQLite on one volume: one writer
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sre-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sre-agent
+    spec:
+      serviceAccountName: sre-agent
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: __IMAGE__
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: https, containerPort: 8443}
+          envFrom:
+            - configMapRef:
+                name: sre-agent-config
+          env:
+            - {name: SRE_AGENT_WEBHOOK_TOKEN_FILE, value: /etc/sre-agent/secrets/webhook-token}
+            - {name: SRE_AGENT_SMTP_PASSWORD_FILE, value: /etc/sre-agent/secrets/smtp-password}
+            - {name: SRE_AGENT_SESSION_SECRET_FILE, value: /etc/sre-agent/secrets/session-secret}
+            - {name: SRE_AGENT_LLM_API_KEY_FILE, value: /etc/sre-agent/secrets/llm-api-key}
+            - {name: SRE_AGENT_APPROVERS_FILE, value: /etc/sre-agent/secrets/approvers}
+            - {name: SRE_AGENT_TLS_CERT, value: /etc/sre-agent/tls/tls.crt}
+            - {name: SRE_AGENT_TLS_KEY, value: /etc/sre-agent/tls/tls.key}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+            - {name: secrets, mountPath: /etc/sre-agent/secrets, readOnly: true}
+            - {name: tls, mountPath: /etc/sre-agent/tls, readOnly: true}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: sre-agent-data
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+        - name: secrets
+          secret:
+            secretName: sre-agent-secrets
+            defaultMode: 0400
+        - name: tls
+          secret:
+            secretName: sre-agent-tls
+            optional: true
+            defaultMode: 0400
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sre-agent
+  namespace: sre-agent
+  labels:
+    app.kubernetes.io/name: sre-agent
+spec:
+  selector:
+    app.kubernetes.io/name: sre-agent
+  ports:
+    - {name: http, port: 8080, targetPort: http}

@@ -48,6 +48,14 @@ python-and-scripts:
     - python -m unittest discover -s lambda/portal-edge
     - for f in sim.sh k8s-classics.sh scripts/*.sh scenarios/*/*.sh ci/*.sh classics/*/*.sh; do bash -n "$f"; done
 
+sre-agent-test:
+  stage: test
+  image: $PY_IMAGE
+  script:
+    - cd apps/sre-agent
+    - pip install -q -r requirements-dev.txt
+    - python -m pytest -q -p no:warnings
+
 manifests:
   stage: test
   image: $PY_IMAGE
