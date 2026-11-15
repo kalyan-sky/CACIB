@@ -17,6 +17,8 @@
       both certificates (expiring + wrong hostname) fixed and verified at every layer (Secret, client handshake,
       alerts resolved, incidents resolved); both RCAs signed off. Live runs found two guide bugs, both fixed:
       the fix script must wait for new.crt at the CA step, and exporter-only alerts must use the certificate's hostname.
+- [x] Learning from past incidents live: the repeat c07 email showed "Seen before" (earlier incident, its fix and
+      time to resolve); RCA sign-off records the agent's accuracy; the accuracy page shows the scorecard.
 
 ## Classic cases (`./k8s-classics.sh`)
 
