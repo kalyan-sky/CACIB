@@ -264,8 +264,12 @@ def check_certificate(c: Ctx) -> Finding | None:
           "Creates a new private key and a certificate request with every name clients use.",
           "new.key and new.csr"),
         R("# Send new.csr to the issuing CA (bank PKI team, ACM Private CA, or let cert-manager re-issue it); "
-          "save the signed certificate followed by its intermediates as new.crt",
+          "save the signed certificate followed by its intermediates as new.crt in this folder",
           "An organisational step, not a command. Never self-sign a production certificate."),
+        R('until [ -s new.crt ]; do read -rp "new.crt not found in $(pwd) yet: get new.csr signed, save it as '
+          'new.crt, then press Enter " _; done; openssl x509 -noout -in new.crt',
+          "Waits until the signed certificate is really there, so later steps never run without it.",
+          "(no output when new.crt is a valid certificate)"),
         R("openssl x509 -noout -subject -enddate -ext subjectAltName -in new.crt",
           "Check the names and dates of the new certificate before deploying it."),
         R(f"kubectl -n {c.ns} get secret {sname} -o yaml > {sname}.backup.yaml && "
@@ -335,7 +339,7 @@ def check_certificate(c: Ctx) -> Finding | None:
                        remediation=[R(f"cat leaf.crt intermediate.crt > fullchain.crt && kubectl -n {c.ns} create "
                                       f"secret tls {sname} --cert=fullchain.crt --key=tls.key --dry-run=client -o yaml "
                                       "| kubectl apply -f -", "Serve the full chain: leaf first, then intermediates."),
-                                    replace[4]],
+                                    replace[5]],
                        expected_outcome="Clients build the chain to a trusted root.",
                        risk="Low.", severity_floor="HIGH", **common)  # type: ignore[arg-type]
     if (tls and tls.get("verified") and (tls.get("days_left") or 999) < 30) or expiry_alert:

@@ -8,6 +8,8 @@
 #                                    web-wronghost  issued for other hostnames   -> TLSEndpointHandshakeFailing
 #   ./scripts/cert-lab.sh status   pods, certificates as served, firing certificate alerts
 #   ./scripts/cert-lab.sh renew    the "fix": correct certificates + restart -> alerts resolve, RCA emails
+#   ./scripts/cert-lab.sh sign <file.csr>   act as the lab CA: sign a CSR (names taken from it) -> <file>.crt
+#                                           (the "send new.csr to the CA" step of the agent's fix script)
 #   ./scripts/cert-lab.sh reset    delete the test (keeps the lab CA)
 #
 # Needs make cert-monitoring first (it creates the lab CA in ~/.cert-lab).
@@ -183,6 +185,21 @@ cmd_renew() {
   echo "    Complete and sign off each RCA in the dashboard (Incident > Root cause analysis)."
 }
 
+cmd_sign() {
+  local csr=${1:?usage: ./scripts/cert-lab.sh sign <path/to/new.csr>}
+  [ -f "$csr" ] || die "$csr not found"
+  [ -f "$CA_DIR/ca.key" ] || die "no lab CA in $CA_DIR - run make cert-monitoring first"
+  local crt="${csr%.csr}.crt"
+  openssl req -in "$csr" -noout -verify >/dev/null 2>&1 || die "$csr is not a valid certificate request"
+  printf 'extendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid\n' \
+    >"$WORK/sign.ext"
+  # the names (subjectAltName) come from the request itself
+  openssl x509 -req -in "$csr" -CA "$CA_DIR/ca.crt" -CAkey "$CA_DIR/ca.key" -CAcreateserial -days 90 -sha256 \
+    -copy_extensions copy -extfile "$WORK/sign.ext" -out "$crt" 2>/dev/null || die "signing failed"
+  ok "signed by $(openssl x509 -noout -issuer -in "$crt" | sed 's/issuer=//') -> $crt"
+  openssl x509 -noout -subject -enddate -ext subjectAltName -in "$crt" | sed 's/^/    /'
+}
+
 cmd_reset() {
   k delete probes -n monitoring -l app.kubernetes.io/part-of=cert-lab --ignore-not-found >/dev/null
   k delete namespace "$NS" --ignore-not-found --wait=false >/dev/null
@@ -193,6 +210,7 @@ case "${1:-}" in
   start) cmd_start ;;
   status) cmd_status ;;
   renew) cmd_renew ;;
+  sign) cmd_sign "${2:-}" ;;
   reset) cmd_reset ;;
   *) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" ;;
 esac

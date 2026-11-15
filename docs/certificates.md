@@ -70,7 +70,10 @@ After about 6 minutes you get **two incident emails**:
 
 `web-healthy` raises nothing, which proves the checks aren't simply always red.
 
-Then follow the guide in the email, in order. Lines starting with `#` are instructions, not commands.
+Then fix each one with the agent's fix script (`bash fix.sh`). It pauses at **MANUAL STEP: send new.csr to
+the CA** and waits until `new.crt` exists. In the lab you are the CA: in a second window, run
+`./scripts/cert-lab.sh sign ~/certfix/new.csr`, which signs the request with the lab CA (names taken from the
+request) and writes `new.crt`. Then press Enter in the script. Without the script, follow the guide in the email, in order. Lines starting with `#` are instructions, not commands.
 In the lab, "send new.csr to the CA" means signing it with the lab CA:
 
 ```bash
