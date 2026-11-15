@@ -72,6 +72,8 @@ class NormalizedAlert(BaseModel):
     node: str | None = None
     pvc: str | None = None
     service: str | None = None
+    secret: str | None = None  # TLS Secret named by a certificate alert
+    endpoint: str | None = None  # https://host:port probed by a TLS alert
     summary: str = ""
     description: str = ""
     labels: dict[str, str] = Field(default_factory=dict)
@@ -90,7 +92,12 @@ class NormalizedAlert(BaseModel):
     @property
     def correlation_key(self) -> str:
         """Alerts about the same thing share one incident (e.g. CrashLooping + ReplicasMismatch)."""
-        if self.node and not self.pod:
+        # the certificate exporter and the endpoint probe report the same Secret: one incident
+        if self.secret:
+            target = f"secret/{self.namespace}/{self.secret}"
+        elif self.endpoint:
+            target = f"tls/{self.endpoint}"
+        elif self.node and not self.pod:
             target = f"node/{self.node}"
         elif self.pvc:
             target = f"pvc/{self.namespace}/{self.pvc}"
@@ -122,6 +129,8 @@ class NormalizedAlert(BaseModel):
             node=_k8s_name(node),
             pvc=_k8s_name(lbl.get("persistentvolumeclaim")),
             service=_k8s_name(lbl.get("service")) if lbl.get("job") != lbl.get("service") else None,
+            secret=_k8s_name(lbl.get("secret") or lbl.get("secret_name")),
+            endpoint=lbl.get("instance") if (lbl.get("instance") or "").startswith("https://") else None,
             summary=alert.annotations.get("summary", "")[:500],
             description=alert.annotations.get("description", alert.annotations.get("message", ""))[:1000],
             labels=lbl,
@@ -268,6 +277,8 @@ class InvestigationEvidence(BaseModel):
     storage_classes: list[str] = Field(default_factory=list)
     quotas: list[dict[str, Any]] = Field(default_factory=list)
     coredns: dict[str, Any] | None = None
+    tls: dict[str, Any] | None = None  # what the endpoint presents (public certificate data only)
+    secret_consumers: list[str] = Field(default_factory=list)  # workloads/ingresses using the TLS Secret
     commands_executed: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     truncated: bool = False

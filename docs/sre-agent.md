@@ -30,7 +30,7 @@ Alertmanager ── group, dedupe, inhibit ──► POST /api/v1/alerts?cluster
 | Area | Before | Now |
 |---|---|---|
 | Prometheus, Alertmanager, Grafana | Installed by Argo CD (`make monitoring`); Alertmanager had no receiver | Alertmanager routes to the agent (grouping, dedup, inhibition); 17 incident rules + coverage rules (Argo CD, VPC CNI IPs, Grafana); `make alert-coverage` |
-| Python service | none (only `tools/platform.py`) | `apps/sre-agent/` FastAPI app, 50 tests |
+| Python service | none (only `tools/platform.py`) | `apps/sre-agent/` FastAPI app, 62 tests |
 | RBAC for automation | team RoleBindings only | `sre-agent-readonly`: get/list/watch, no Secrets/ConfigMaps/exec/writes |
 | Email, AI, approvals, incident UI | none | added; LLM off by default (your choice: rule engine) |
 | Image builds | crane for the Go app | `ci/build-sre-agent.sh`: crane, no Docker; pushes to ECR from the jump host |
@@ -127,6 +127,11 @@ change ticket or the wiki; JSON at `/api/v1/incidents/<id>/rca`.
 
 ## What it detects (rule engine)
 
+Certificates (with `make cert-monitoring`, see [`certificates.md`](certificates.md)): expired, expiring,
+wrong hostname, untrusted issuer or incomplete chain, unreachable TLS endpoint. Diagnosed from a real TLS
+handshake and from who uses the Secret, never by reading the Secret.
+
+
 CreateContainerConfigError (missing Secret/ConfigMap key or object) · ImagePullBackOff (missing tag, registry
 auth, network) · OOMKilled · liveness probe kills · CrashLoopBackOff (exit code meaning + the decisive log line:
 bad config, missing env, dependency down, permissions, missing file, crash) · PVC Pending (missing/no default
@@ -201,7 +206,7 @@ Point each cluster's Alertmanager at `...?cluster=<its name>`. Incidents, histor
 
 ## Tests
 
-`make sre-agent-test` (also in the GitLab pipeline as `sre-agent-test`): 50 tests, no cluster needed.
+`make sre-agent-test` (also in the GitLab pipeline as `sre-agent-test`): 62 tests, no cluster needed.
 - Scenarios against a fake cluster: CrashLoopBackOff, OOMKilled, ImagePullBackOff, Pending (CPU, taint),
   Node NotReady, insufficient evidence, missing objects, CreateContainerConfigError, PVC, CoreDNS, RBAC 403s.
 - Security: allowlist, static scan for write/exec/Secret calls, RBAC manifest, redaction, approval makes zero API calls.

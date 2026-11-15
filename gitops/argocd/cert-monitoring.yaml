@@ -1,0 +1,76 @@
+# Certificate monitoring, deployed by Argo CD (installed by scripts/cert-monitoring-up.sh,
+# which fills in the pinned chart versions):
+#
+#   x509-certificate-exporter  reads every kubernetes.io/tls Secret and exports each certificate's
+#                              expiry (x509_cert_not_after). It needs read access to Secrets, so it
+#                              is its own component: the SRE agent keeps no access to Secrets.
+#   blackbox exporter          connects to HTTPS endpoints like a client: expiry, hostname, chain and
+#                              trust as clients see them (Probe objects list the endpoints).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: x509-certificate-exporter
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://charts.enix.io
+    chart: x509-certificate-exporter
+    targetRevision: "__X509_VERSION__"
+    helm:
+      releaseName: x509-certificate-exporter
+      valuesObject:
+        secretsExporter:
+          enabled: true # every kubernetes.io/tls Secret, key tls.crt
+        prometheusServiceMonitor:
+          create: true
+        prometheusRules:
+          create: false # our rules: platform/monitoring/certificate-rules.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions: [ServerSideApply=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: blackbox-exporter
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: prometheus-blackbox-exporter
+    targetRevision: "__BLACKBOX_VERSION__"
+    helm:
+      releaseName: blackbox-exporter
+      valuesObject:
+        fullnameOverride: blackbox-exporter # Service blackbox-exporter.monitoring:9115
+        config:
+          modules:
+            tls_strict: # what a verifying client sees: hostname, expiry, chain, trust
+              prober: http
+              timeout: 5s
+              http:
+                preferred_ip_protocol: ip4
+                tls_config:
+                  ca_file: /etc/blackbox/trust/ca.crt # internal CA; in production: internal + public roots
+            tls_reachability: # handshake without verification: is it up, and what does it present?
+              prober: http
+              timeout: 5s
+              http:
+                preferred_ip_protocol: ip4
+                tls_config:
+                  insecure_skip_verify: true
+        extraSecretMounts:
+          - name: trust
+            mountPath: /etc/blackbox/trust
+            secretName: tls-trust-bundle
+            readOnly: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}

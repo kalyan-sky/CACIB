@@ -55,6 +55,7 @@ spec:
             - {name: SRE_AGENT_APPROVERS_FILE, value: /etc/sre-agent/secrets/approvers}
             - {name: SRE_AGENT_TLS_CERT, value: /etc/sre-agent/tls/tls.crt}
             - {name: SRE_AGENT_TLS_KEY, value: /etc/sre-agent/tls/tls.key}
+            - {name: SRE_AGENT_TLS_CA_FILE, value: /etc/sre-agent/trust/ca.crt} # internal CA for TLS checks
           readinessProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 10
@@ -75,6 +76,7 @@ spec:
             - {name: tmp, mountPath: /tmp}
             - {name: secrets, mountPath: /etc/sre-agent/secrets, readOnly: true}
             - {name: tls, mountPath: /etc/sre-agent/tls, readOnly: true}
+            - {name: trust, mountPath: /etc/sre-agent/trust, readOnly: true}
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -90,6 +92,10 @@ spec:
             secretName: sre-agent-tls
             optional: true
             defaultMode: 0400
+        - name: trust # public CA certificate(s) only, from scripts/cert-monitoring-up.sh
+          secret:
+            secretName: tls-trust-bundle
+            optional: true
 ---
 apiVersion: v1
 kind: Service

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
-from typing import Any
+from typing import Any, Callable
 
 from .config import Limits
 from .k8s.readonly import KubeApiError, KubeReader
@@ -24,9 +25,11 @@ class Deadline:
 
 
 class DiagnosticEngine:
-    def __init__(self, kube: KubeReader, limits: Limits):
+    def __init__(self, kube: KubeReader, limits: Limits, tls_prober: Callable[[str], dict[str, Any]] | None = None):
         self.kube = kube
         self.limits = limits
+        self.tls_prober = tls_prober  # read-only TLS handshake (see tlsprobe.py); None disables it
+        self.other_commands: list[str] = []
 
     # ------------------------------------------------------------------ helpers
 
@@ -51,6 +54,10 @@ class DiagnosticEngine:
         ns = alert.namespace
 
         try:
+            if alert.endpoint and self.tls_prober:
+                self._collect_tls(ev, alert.endpoint)
+            if ns and alert.secret:
+                self._collect_secret_consumers(ev, ns, alert.secret)
             pods: list[dict[str, Any]] = []
             if ns and alert.pod:
                 pod = self._get(ev, "read_pod", name=alert.pod, namespace=ns)
@@ -146,11 +153,43 @@ class DiagnosticEngine:
         if deadline.expired:
             ev.truncated = True
         ev.events = dedupe_events(ev.events)[-self.limits.max_events:]
-        ev.commands_executed = list(dict.fromkeys(self.kube.commands))
+        ev.commands_executed = list(dict.fromkeys(self.other_commands + self.kube.commands))
         ev.duration_seconds = round(time.monotonic() - start, 2)
         return InvestigationEvidence.model_validate(redact(ev.model_dump()))
 
     # ------------------------------------------------------------------ collectors
+
+    def _collect_tls(self, ev: InvestigationEvidence, endpoint: str) -> None:
+        from .tlsprobe import ProbeNotAllowed, target_of
+
+        try:
+            host, port = target_of(endpoint)
+            self.other_commands.append(f"openssl s_client -connect {host}:{port} -servername {host} </dev/null "
+                                       "| openssl x509 -noout -subject -issuer -dates -ext subjectAltName")
+            ev.tls = self.tls_prober(endpoint)  # type: ignore[misc]
+        except ProbeNotAllowed as e:
+            ev.errors.append(f"TLS probe refused: {e}")
+        except Exception as e:  # network errors are evidence too
+            ev.errors.append(f"TLS probe failed: {type(e).__name__}: {e}")
+
+    def _collect_secret_consumers(self, ev: InvestigationEvidence, ns: str, secret: str) -> None:
+        """Who uses this TLS Secret? Only pod specs and Ingresses are read, never the Secret itself."""
+        pods = self._get(ev, "list_pods", namespace=ns)
+        users: set[str] = set()
+        for p in (pods or {}).get("items", []):
+            vols = (p.get("spec") or {}).get("volumes") or []
+            names = {(v.get("secret") or {}).get("secretName") for v in vols}
+            names |= {(src.get("secret") or {}).get("name") for v in vols
+                      for src in ((v.get("projected") or {}).get("sources") or [])}
+            if secret in names:
+                m = re.match(r"^(?P<base>.+)-[a-z0-9]{6,10}-[a-z0-9]{5}$", p["metadata"]["name"])
+                users.add(f"deployment/{m.group('base')}" if m else f"pod/{p['metadata']['name']}")
+        ing = self._get(ev, "list_ingresses", namespace=ns)
+        for i in (ing or {}).get("items", []):
+            for t in ((i.get("spec") or {}).get("tls") or []):
+                if t.get("secretName") == secret:
+                    users.add(f"ingress/{i['metadata']['name']} (hosts: {', '.join(t.get('hosts') or []) or '-'})")
+        ev.secret_consumers = sorted(users)
 
     def _unhealthy_pods_of(self, ev: InvestigationEvidence, deployment: dict[str, Any], ns: str,
                            exclude: set[str]) -> list[dict[str, Any]]:
@@ -316,6 +355,8 @@ def summarize_pod(pod: dict[str, Any]) -> dict[str, Any]:
         "pvc_claims": [v["persistentVolumeClaim"]["claimName"] for v in spec.get("volumes") or []
                        if v.get("persistentVolumeClaim")],
         "volumes_from": sorted({k for v in spec.get("volumes") or [] for k in v if k != "name"}),
+        "secrets_mounted": sorted({v["secret"]["secretName"] for v in spec.get("volumes") or []
+                                   if (v.get("secret") or {}).get("secretName")}),  # names only, never contents
         "config_maps": sorted({v["configMap"]["name"] for v in spec.get("volumes") or [] if v.get("configMap")}
                               | {ef["configMapRef"]["name"] for c in spec.get("containers") or []
                                  for ef in c.get("envFrom") or [] if ef.get("configMapRef")}),

@@ -6,7 +6,7 @@ CLUSTER ?= bank-sim
 IMAGE   ?= $(shell cat .sim-state/image 2>/dev/null || echo bank-sim/txn-service:1.5.0)
 CONTEXT ?= $(shell cat .sim-state/context 2>/dev/null || echo kind-$(CLUSTER))
 
-.PHONY: help up down eks-up eks-deploy eks-down tf-up gitops-bootstrap monitoring sre-agent-test sre-agent-up sre-agent-verify sre-agent-down alert-coverage tf-down gitops-pull portal-lambda portal-lambda-down render apply diff build audit audit-offline capacity inventory status test
+.PHONY: help up down eks-up eks-deploy eks-down tf-up gitops-bootstrap monitoring sre-agent-test sre-agent-up sre-agent-verify sre-agent-down alert-coverage cert-monitoring cert-lab tf-down gitops-pull portal-lambda portal-lambda-down render apply diff build audit audit-offline capacity inventory status test
 
 help: ## show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-14s %s\n", $$1, $$2}'
@@ -48,6 +48,12 @@ sre-agent-up: ## SRE agent: build, deploy read-only, route Alertmanager to it; S
 
 sre-agent-verify: ## SRE agent: RBAC can-i checks, health, routing; ARGS=--incident also runs a test incident
 	./scripts/sre-agent-verify.sh $(ARGS)
+
+cert-monitoring: ## certificate expiry + TLS endpoint checks (x509 exporter, blackbox) via Argo CD; alerts to the agent
+	./scripts/cert-monitoring-up.sh
+
+cert-lab: ## certificate incident test: ARGS=start | status | renew | reset
+	./scripts/cert-lab.sh $(ARGS)
 
 alert-coverage: ## is every monitored job alerted, and does every alert reach the SRE agent? (live, read-only)
 	$(PY) tools/alert_coverage.py

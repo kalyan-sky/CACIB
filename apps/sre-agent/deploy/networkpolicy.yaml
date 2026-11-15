@@ -27,5 +27,6 @@ spec:
         - {protocol: UDP, port: 53}
         - {protocol: TCP, port: 53}
     - ports:
-        - {protocol: TCP, port: 443} # Kubernetes API (EKS endpoint) and an optional LLM API
+        - {protocol: TCP, port: 443} # Kubernetes API (EKS endpoint), TLS checks, an optional LLM API
+        - {protocol: TCP, port: 8443} # TLS checks of in-cluster endpoints whose pods listen on 8443
         - {protocol: TCP, port: 587} # SMTP submission (STARTTLS)

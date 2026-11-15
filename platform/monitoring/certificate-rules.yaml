@@ -1,0 +1,71 @@
+# Certificate alerts. Two independent sources:
+#   x509_cert_*          x509-certificate-exporter: every TLS Secret, whether or not anything serves it
+#   probe_* (tls-*)      blackbox exporter: endpoints as clients see them (hostname, chain, trust, expiry)
+# Thresholds: 30 days (plan the renewal), 3 days (critical), expired. Change the numbers below.
+# Alerts carry `namespace` and `secret` (and `deployment` for probes) so the SRE agent can find who
+# uses the certificate; alerts about the same Secret from both sources become one incident.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: certificates
+  namespace: monitoring
+spec:
+  groups:
+    - name: certificates
+      rules:
+        - record: cert:days_left
+          expr: |
+            label_replace(label_replace(
+              (max without (pod, container, endpoint, instance, job, service, namespace) (x509_cert_not_after)
+                - time()) / 86400,
+            "namespace", "$1", "secret_namespace", "(.+)"), "secret", "$1", "secret_name", "(.+)")
+        - alert: CertificateExpiringSoon
+          expr: cert:days_left < 30 and cert:days_left >= 3
+          for: 15m
+          labels: {severity: warning, sre_severity: medium}
+          annotations:
+            summary: "Certificate {{ $labels.subject_CN }} in Secret {{ $labels.namespace }}/{{ $labels.secret }} expires in {{ $value | humanize }} days"
+        - alert: CertificateExpiringCritical
+          expr: cert:days_left < 3 and cert:days_left > 0
+          for: 5m
+          labels: {severity: critical}
+          annotations:
+            summary: "Certificate {{ $labels.subject_CN }} in Secret {{ $labels.namespace }}/{{ $labels.secret }} expires in {{ $value | humanize }} days"
+        - alert: CertificateExpired
+          expr: cert:days_left <= 0
+          for: 1m
+          labels: {severity: critical}
+          annotations:
+            summary: "Certificate {{ $labels.subject_CN }} in Secret {{ $labels.namespace }}/{{ $labels.secret }} has expired"
+        - alert: CertificateExporterReadErrors
+          expr: sum(increase(x509_read_errors[15m])) > 0
+          labels: {severity: warning, namespace: monitoring}
+          annotations:
+            summary: "x509-certificate-exporter cannot read some certificates: they are not being checked"
+
+    - name: tls-endpoints
+      rules:
+        - record: tls:probe_strict
+          expr: label_replace(probe_success{job="tls-strict"}, "namespace", "$1", "target_namespace", "(.+)")
+        - record: tls:probe_reachable
+          expr: label_replace(probe_success{job="tls-reachability"}, "namespace", "$1", "target_namespace", "(.+)")
+        - alert: TLSEndpointHandshakeFailing # reachable, but a verifying client rejects the certificate
+          expr: tls:probe_strict == 0 and on (instance) tls:probe_reachable == 1
+          for: 3m
+          labels: {severity: warning, sre_severity: high}
+          annotations:
+            summary: "Clients reject the TLS certificate of {{ $labels.instance }} (expired, wrong hostname or untrusted)"
+        - alert: TLSEndpointCertExpiringSoon
+          expr: |
+            label_replace((probe_ssl_earliest_cert_expiry{job="tls-reachability"} - time()) / 86400,
+              "namespace", "$1", "target_namespace", "(.+)") < 30
+          for: 15m
+          labels: {severity: warning, sre_severity: medium}
+          annotations:
+            summary: "{{ $labels.instance }} serves a certificate that expires in {{ $value | humanize }} days"
+        - alert: TLSEndpointDown
+          expr: tls:probe_reachable == 0
+          for: 5m
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ $labels.instance }} does not complete a TLS handshake"

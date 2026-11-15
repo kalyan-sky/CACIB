@@ -87,7 +87,7 @@ class FakeKube:
                  events: list | None = None, nodes: list | None = None, logs: dict | None = None,
                  pvcs: list | None = None, storage_classes: list | None = None, services: list | None = None,
                  endpoints: dict | None = None, quotas: list | None = None, pod_metrics: list | None = None,
-                 forbidden: set[str] | None = None):
+                 forbidden: set[str] | None = None, ingresses: list | None = None):
         self.cluster = cluster
         self.commands: list[str] = []
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -103,6 +103,7 @@ class FakeKube:
         self.quotas = quotas or []
         self.pod_metrics = pod_metrics or []
         self.forbidden = forbidden or set()
+        self.ingresses = ingresses or []
 
     def call(self, operation: str, **kw: Any) -> Any:
         if operation not in ALLOWED_OPERATIONS:
@@ -166,6 +167,8 @@ class FakeKube:
             return {"items": self.quotas}
         if operation == "list_network_policies":
             return {"items": []}
+        if operation == "list_ingresses":
+            return {"items": self.ingresses}
         raise AssertionError(f"fake does not implement {operation}")
 
     def _one(self, items: list, name: str, ns: str | None, op: str) -> dict[str, Any]:

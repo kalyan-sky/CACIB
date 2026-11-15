@@ -37,6 +37,7 @@ ALLOWED_OPERATIONS: dict[str, str] = {
     "list_storage_classes": "kubectl get storageclass",
     "list_resource_quotas": "kubectl describe resourcequota -n {namespace}",
     "list_network_policies": "kubectl get networkpolicy -n {namespace}",
+    "list_ingresses": "kubectl get ingress -n {namespace} -o yaml",
 }
 
 
@@ -112,6 +113,7 @@ class ReadOnlyKube:
             "list_resource_quotas": lambda namespace: self._core.list_namespaced_resource_quota(namespace, **self._t()),
             "list_network_policies": lambda namespace: self._net.list_namespaced_network_policy(
                 namespace, limit=100, **self._t()),
+            "list_ingresses": lambda namespace: self._net.list_namespaced_ingress(namespace, limit=100, **self._t()),
         }
         assert set(self._ops) == set(ALLOWED_OPERATIONS), "allowlist and implementations must match"
 

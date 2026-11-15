@@ -150,6 +150,24 @@ CAPA: dict[str, list[tuple[str, str]]] = {
         ("preventive", "Review CPU limits against p99 usage each quarter"),
     ],
 }
+_CERT_CAPA = [
+    ("preventive", "Automate issuance and renewal (cert-manager with the bank CA / ACM), renewBefore >= 30 days"),
+    ("preventive", "Certificate inventory with an owner and renewal path for every certificate"),
+    ("detective", "Expiry alerts at 30 / 14 / 3 days and TLS handshake probes on every endpoint"),
+]
+CAPA.update({
+    "CertificateExpiringSoon": [("corrective", "Renew the certificate before its expiry date")] + _CERT_CAPA,
+    "CertificateExpired": [("corrective", "Deploy a renewed certificate and restart its consumers")] + _CERT_CAPA,
+    "TLSHostnameMismatch": [
+        ("corrective", "Deploy a certificate whose DNS names include every name clients use"),
+        ("preventive", "Certificate requests list all external and internal (Service) names; CI check of SANs"),
+        ("detective", "Strict TLS probes (hostname verification on) for every endpoint")],
+    "TLSUntrustedCertificate": [
+        ("corrective", "Serve the full chain (leaf + intermediates)"),
+        ("preventive", "Distribute the bank's internal root CA to all clients and base images"),
+        ("detective", "Strict TLS probes using the clients' trust store")],
+})
+
 GENERIC_CAPA = [
     ("corrective", "Confirm the root cause in the post-incident review and record the fix"),
     ("preventive", "Add an automated check (CI, admission policy or test) that would have caught this"),

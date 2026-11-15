@@ -8,11 +8,12 @@ Nothing in this module can change a cluster: it only holds KubeReaders.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import time
 from typing import Callable
 
-from . import metrics
+from . import metrics, tlsprobe
 from .analysis.llm import LlmAnalyzer
 from .analysis.rules import build_report
 from .config import Settings
@@ -37,6 +38,8 @@ class Pipeline:
         # ("investigate", incident_id, alert) or ("rca", incident_id, None)
         self.queue: asyncio.Queue[tuple[str, str, NormalizedAlert | None]] = asyncio.Queue(maxsize=1000)
         self._workers: list[asyncio.Task[None]] = []
+        self.tls_prober: Callable[[str], dict] | None = functools.partial(
+            tlsprobe.probe, allowed_suffixes=settings.tls_probe_suffixes, ca_file=settings.tls_ca_file)
 
     # ------------------------------------------------------------------ intake (called by the webhook)
 
@@ -123,7 +126,7 @@ class Pipeline:
         kube = self.kube_factory(alert.cluster)
         if kube.cluster != alert.cluster:  # belt and braces: never cross clusters
             raise RuntimeError(f"reader for {kube.cluster} offered for an alert from {alert.cluster}")
-        return DiagnosticEngine(kube, self.settings.limits).investigate(alert)
+        return DiagnosticEngine(kube, self.settings.limits, self.tls_prober).investigate(alert)
 
     def process(self, incident_id: str, alert: NormalizedAlert) -> IncidentReport | None:
         start = time.monotonic()

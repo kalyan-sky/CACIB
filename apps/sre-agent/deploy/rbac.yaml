@@ -32,7 +32,7 @@ rules:
     resources: [events]
     verbs: [get, list, watch]
   - apiGroups: [networking.k8s.io]
-    resources: [networkpolicies]
+    resources: [networkpolicies, ingresses] # Ingress TLS sections name the Secret, never its contents
     verbs: [get, list, watch]
   - apiGroups: [discovery.k8s.io]
     resources: [endpointslices]

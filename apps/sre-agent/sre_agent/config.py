@@ -108,6 +108,8 @@ class Settings:
     dashboard_url: str | None = None
     critical_namespaces: list[str] = field(default_factory=list)
     rate_limit_per_minute: int = 120
+    tls_probe_suffixes: tuple[str, ...] = (".svc", ".svc.cluster.local")
+    tls_ca_file: str | None = None  # extra CA (e.g. the bank's internal root) trusted by the TLS probe
     limits: Limits = field(default_factory=Limits)
     llm: LlmConfig = field(default_factory=LlmConfig)
 
@@ -185,6 +187,8 @@ class Settings:
             dashboard_url=env("SRE_AGENT_DASHBOARD_URL"),
             critical_namespaces=env_list("SRE_AGENT_CRITICAL_NAMESPACES", "payments,core-banking"),
             rate_limit_per_minute=env_int("SRE_AGENT_RATE_LIMIT_PER_MINUTE", 120),
+            tls_probe_suffixes=tuple(env_list("SRE_AGENT_TLS_PROBE_SUFFIXES", ".svc,.svc.cluster.local")),
+            tls_ca_file=env("SRE_AGENT_TLS_CA_FILE"),  # may appear later (optional Secret); checked per probe
             limits=Limits(
                 log_tail_lines=env_int("SRE_AGENT_LOG_TAIL_LINES", 200),
                 log_max_bytes=env_int("SRE_AGENT_LOG_MAX_BYTES", 32_000),

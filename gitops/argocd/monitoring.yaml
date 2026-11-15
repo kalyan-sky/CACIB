@@ -15,6 +15,7 @@ spec:
   description: Platform add-ons owned by the platform team
   sourceRepos:
     - https://prometheus-community.github.io/helm-charts
+    - https://charts.enix.io # x509-certificate-exporter
   destinations:
     - server: https://kubernetes.default.svc
       namespace: monitoring
@@ -55,6 +56,7 @@ spec:
             serviceMonitorSelectorNilUsesHelmValues: false
             podMonitorSelectorNilUsesHelmValues: false
             ruleSelectorNilUsesHelmValues: false
+            probeSelectorNilUsesHelmValues: false # blackbox Probe objects (TLS checks)
             # The bank's pods carry prometheus.io/scrape + prometheus.io/port annotations.
             additionalScrapeConfigs:
               - job_name: bank-apps

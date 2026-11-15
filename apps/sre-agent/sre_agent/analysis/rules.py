@@ -150,6 +150,154 @@ class Ctx:
 
 # ---------------------------------------------------------------------- checkers
 
+CERT_ALERT_PREFIXES = ("Certificate", "TLSEndpoint", "X509", "TLS")
+
+
+def check_certificate(c: Ctx) -> Finding | None:
+    """Expired, expiring, wrong-host or untrusted TLS certificates.
+
+    Evidence: what the endpoint presents in a real handshake (agent TLS probe) and/or what the
+    certificate exporter read from the Secret (in the alert). The agent never reads the Secret.
+    """
+    a, tls = c.alert, c.ev.tls
+    if not a.alertname.startswith(CERT_ALERT_PREFIXES) and not tls:
+        return None
+    secret = a.secret or next((s for p in c.ev.pods for s in p.get("secrets_mounted", []) if "tls" in s), None)
+    sname = secret or "<tls-secret>"
+    evidence: list[Evidence] = []
+    if tls and not tls.get("connect_error"):
+        evidence.append(Evidence(
+            source="tls.handshake",
+            observation=f"{tls['endpoint']} presents a certificate for CN={tls.get('subject_cn')}, DNS names "
+                        f"{tls.get('dns_names')}, issued by {tls.get('issuer_cn')}, valid until {tls.get('not_after')} "
+                        f"({tls.get('days_left')} days left)"))
+        evidence.append(Evidence(source="tls.verify", observation="TLS verification succeeded" if tls.get("verified")
+                                 else f"TLS verification failed: {tls.get('verify_error')}"))
+    elif tls:
+        evidence.append(Evidence(source="tls.handshake", observation=f"no TLS handshake: {tls.get('connect_error')}"))
+    if a.alertname.startswith(CERT_ALERT_PREFIXES):
+        text = a.description or a.summary
+        if text:
+            evidence.append(Evidence(source="alert", observation=f"{a.alertname}: {text}"))
+    if c.ev.secret_consumers:
+        evidence.append(Evidence(source="pod.spec/ingress",
+                                 observation=f"Secret {c.ns}/{sname} is used by {', '.join(c.ev.secret_consumers)}"))
+    for p in c.ev.pods[:1]:
+        if p.get("secrets_mounted"):
+            evidence.append(Evidence(source="pod.spec", observation=f"pod {p['name']} mounts Secret(s) "
+                                                                    f"{', '.join(p['secrets_mounted'])}"))
+
+    host = (tls or {}).get("hostname") or "<host>"
+    port = ((tls or {}).get("endpoint") or ":443").rsplit(":", 1)[-1]
+    consumer = next((u.split("/", 1)[1] for u in c.ev.secret_consumers if u.startswith("deployment/")), None) \
+        or (c.dep_name if c.dep_name != "<deployment>" else "<deployment>")
+    show_cert = D(f"kubectl -n {c.ns} get secret {sname} -o jsonpath='{{.data.tls\\.crt}}' | base64 -d | "
+                  "openssl x509 -noout -subject -issuer -dates -ext subjectAltName",
+                  "Shows the public certificate stored in the Secret (run by an engineer; the agent cannot read Secrets).",
+                  "notAfter and the DNS names; compare with what the endpoint presents.")
+    probe_cmd = D(f"kubectl run tls-check --rm -it --restart=Never --image=alpine/openssl -- s_client -connect "
+                  f"{host}:{port} -servername {host} -verify_return_error </dev/null",
+                  "Repeats the handshake a client makes; 'Verify return code' shows the exact failure.")
+    replace = [
+        R("Request a new certificate from the issuing CA (or let cert-manager re-issue it) with these DNS names: "
+          + ", ".join(sorted({host, *((tls or {}).get("dns_names") or [])} - {"<host>"})) if tls else
+          "Request a new certificate from the issuing CA (or let cert-manager re-issue it) with the same DNS names",
+          "Never generate a self-signed certificate for a production endpoint; use the bank's CA process."),
+        R(f"kubectl -n {c.ns} create secret tls {sname} --cert=new.crt --key=new.key --dry-run=client -o yaml "
+          f"| kubectl apply -f -",
+          "Replaces the certificate and key in place; keep the old files until the new ones are verified.",
+          f"secret/{sname} configured"),
+        R(f"kubectl -n {c.ns} rollout restart deployment/{consumer}",
+          "Most servers (nginx, Java) read the certificate only at start-up.",
+          f"deployment.apps/{consumer} restarted"),
+    ]
+    verify = [V(f"kubectl run tls-check --rm -it --restart=Never --image=alpine/openssl -- s_client -connect "
+                f"{host}:{port} -servername {host} -verify_return_error </dev/null | grep -E 'Verify return|NotAfter'",
+                "The handshake must verify.", "Verify return code: 0 (ok)"),
+              V("Wait for the alert to resolve (the probe and exporter re-check every minute)",
+                "Monitoring confirms the fix from the client's point of view.")]
+    rollback = [B(f"kubectl -n {c.ns} create secret tls {sname} --cert=old.crt --key=old.key --dry-run=client -o yaml "
+                  f"| kubectl apply -f - && kubectl -n {c.ns} rollout restart deployment/{consumer}",
+                  "Only if the new certificate breaks clients and the old one is still valid.")]
+    common = dict(investigations=[show_cert, probe_cmd], verification=verify, rollback=rollback)
+    renewal_factors = ["Renewal is manual and nobody owned the expiry date (hypothesis)",
+                       "An automated renewal (cert-manager/ACM) failed: check its status and events (hypothesis)"]
+
+    verify_error = ((tls or {}).get("verify_error") or "").lower()
+    expired_alert = "expired" in a.alertname.lower()
+    expiry_alert = "expir" in a.alertname.lower() and not expired_alert
+    endpoint_expired = bool(tls) and not tls.get("connect_error") and "expired" in verify_error  # type: ignore[union-attr]
+    if endpoint_expired or (expired_alert and not tls):
+        cn = (tls or {}).get("subject_cn") or a.labels.get("subject_CN") or "?"
+        where = host if endpoint_expired else f"Secret {c.ns}/{sname}"
+        return Finding("CertificateExpired",
+                       f"{where} holds an expired certificate: every client that verifies TLS is rejected.",
+                       (f"The certificate presented by {host} (CN={cn}) expired at {tls.get('not_after')}. "  # type: ignore[union-attr]
+                        if endpoint_expired else f"The certificate CN={cn} in Secret {c.ns}/{sname} has expired. ")
+                       + "It was not renewed before its expiry date.",
+                       "confirmed", 0.95, evidence, factors=renewal_factors, remediation=replace,
+                       prerequisites=["A new certificate and key from the issuing CA", "A change window (restart)"],
+                       expected_outcome="Clients verify the certificate again; the alerts resolve.",
+                       risk="Low for a like-for-like renewal. Wrong DNS names or chain would break clients again.",
+                       severity_floor="CRITICAL", **common)  # type: ignore[arg-type]
+    if tls and not tls.get("connect_error") and ("hostname mismatch" in verify_error or
+                                                  (tls.get("hostname_matches") is False and not tls.get("verified"))):
+        return Finding("TLSHostnameMismatch",
+                       f"{host} serves a certificate issued for other names: clients reject the connection.",
+                       f"Clients connect to {host}, but the certificate (CN={tls.get('subject_cn')}) is only valid "
+                       f"for {tls.get('dns_names') or 'its CN'}. The wrong certificate is deployed, or it was issued "
+                       f"without {host} in its DNS names.",
+                       "confirmed", 0.95, evidence,
+                       factors=["The certificate of another service was copied into this Secret (hypothesis)",
+                                "The certificate request listed only the external name, not the service name "
+                                "clients use (hypothesis)"],
+                       remediation=replace,
+                       prerequisites=[f"A certificate whose DNS names include {host}"],
+                       expected_outcome="The handshake verifies for every name clients use.",
+                       risk="Low; list every name clients use in the new certificate.",
+                       severity_floor="HIGH", **common)  # type: ignore[arg-type]
+    if tls and not tls.get("connect_error") and any(k in verify_error for k in
+                                                     ("unable to get local issuer", "self-signed", "self signed",
+                                                      "unable to verify the first certificate")):
+        return Finding("TLSUntrustedCertificate",
+                       f"{host} serves a certificate clients cannot trace to a trusted CA.",
+                       f"The certificate issued by {tls.get('issuer_cn')} does not chain to a CA the client trusts "
+                       f"({tls.get('verify_error')}): the intermediate certificate is missing from tls.crt, or the "
+                       "issuing CA is not in the clients' trust store.",
+                       "confirmed", 0.85, evidence,
+                       factors=["tls.crt holds only the leaf, without the intermediate (hypothesis)",
+                                "A private CA that clients were never given (hypothesis)"],
+                       remediation=[R(f"cat leaf.crt intermediate.crt > fullchain.crt && kubectl -n {c.ns} create "
+                                      f"secret tls {sname} --cert=fullchain.crt --key=tls.key --dry-run=client -o yaml "
+                                      "| kubectl apply -f -", "Serve the full chain: leaf first, then intermediates."),
+                                    replace[2]],
+                       expected_outcome="Clients build the chain to a trusted root.",
+                       risk="Low.", severity_floor="HIGH", **common)  # type: ignore[arg-type]
+    if (tls and tls.get("verified") and (tls.get("days_left") or 999) < 30) or expiry_alert:
+        days = (tls or {}).get("days_left")
+        when = f"{tls.get('not_after')} ({days} days left)" if tls and days is not None else \
+            (a.description or a.summary or "soon (see the alert)")
+        subject = f"CN={tls.get('subject_cn')}" if tls else (a.labels.get("subject_CN") and
+                                                            f"CN={a.labels.get('subject_CN')}") or "the certificate"
+        return Finding("CertificateExpiringSoon",
+                       f"The TLS certificate {subject} in Secret {c.ns}/{sname} expires soon; on that date clients "
+                       "will be rejected.",
+                       f"{subject} expires at {when} and has not been renewed yet.",
+                       "confirmed", 0.9, evidence, factors=renewal_factors, remediation=replace,
+                       prerequisites=["A new certificate and key from the issuing CA before the expiry date"],
+                       expected_outcome="The new certificate is served; the expiry alert resolves.",
+                       risk="Low if done before expiry; after expiry this becomes an outage.", **common)  # type: ignore[arg-type]
+    if tls and tls.get("connect_error"):
+        return Finding("TLSEndpointUnreachable", f"{tls.get('endpoint')} does not complete a TLS handshake.",
+                       f"The TLS connection fails before a certificate is exchanged: {tls.get('connect_error')}.",
+                       "probable", 0.6, evidence,
+                       factors=["The pods behind the Service are down (hypothesis)",
+                                "The port is not TLS, or a NetworkPolicy blocks it (hypothesis)"],
+                       investigations=[probe_cmd, c.get_pods()],
+                       expected_outcome="The endpoint completes the handshake.", risk="None from investigating.")
+    return None
+
+
 def check_config_error(c: Ctx) -> Finding | None:
     for ct in c.containers():
         if ct["state"] != "waiting:CreateContainerConfigError":
@@ -766,7 +914,7 @@ def check_throttling(c: Ctx) -> Finding | None:
 
 
 CHECKERS: list[Callable[[Ctx], Finding | None]] = [
-    check_coredns, check_node, check_config_error, check_image_pull, check_oom, check_liveness, check_crashloop,
+    check_certificate, check_coredns, check_node, check_config_error, check_image_pull, check_oom, check_liveness, check_crashloop,
     check_pvc, check_quota, check_pending, check_readiness, check_service_endpoints, check_throttling,
 ]
 
@@ -817,6 +965,13 @@ def inconclusive(c: Ctx) -> Finding:
 # ---------------------------------------------------------------------- report assembly
 
 def business_impact(c: Ctx, finding: Finding) -> str:
+    if finding.incident_type in ("CertificateExpired", "TLSHostnameMismatch", "TLSUntrustedCertificate"):
+        users = ", ".join(c.ev.secret_consumers) or (c.ev.tls or {}).get("endpoint") or "the endpoint"
+        return (f"Now: every client that verifies TLS (browsers, most services, partner integrations) fails to "
+                f"connect to {users}. Clients that skip verification keep working, which can hide the problem.")
+    if finding.incident_type == "CertificateExpiringSoon":
+        users = ", ".join(c.ev.secret_consumers) or (c.ev.tls or {}).get("endpoint") or "its users"
+        return f"No impact yet. At expiry, {users} will be rejected by verifying clients: a hard outage with a known date."
     if finding.incident_type == "CoreDNSDown":
         return "Cluster-wide: every service that resolves names fails. Treat as a major incident."
     if finding.incident_type in ("NodeNotReady", "NodePressure"):
