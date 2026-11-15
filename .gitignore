@@ -9,3 +9,12 @@ terraform/terraform.tfvars
 terraform/tfplan
 .venv-sre-agent/
 .pytest_cache/
+
+# certificate work files: private keys and Secret backups must never be committed
+*.key
+*.csr
+new.crt
+new.ext
+sign.ext
+*.backup.yaml
+fix.sh
