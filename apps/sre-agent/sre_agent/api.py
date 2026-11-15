@@ -123,7 +123,7 @@ def create_app(settings: Settings | None = None, *, kube_factory: Callable[[str]
     # ------------------------------------------------------------------ Alertmanager webhook
 
     @app.post("/api/v1/alerts", status_code=202)
-    def alerts(request: Request, body: AmWebhook, cluster: str | None = Query(default=None, max_length=63)) -> dict[str, Any]:
+    async def alerts(request: Request, body: AmWebhook, cluster: str | None = Query(default=None, max_length=63)) -> dict[str, Any]:
         auth = request.headers.get("authorization", "")
         token = auth[7:] if auth.lower().startswith("bearer ") else None
         if not token_matches(token, settings.webhook_token):
@@ -214,6 +214,50 @@ def create_app(settings: Settings | None = None, *, kube_factory: Callable[[str]
         return templates.TemplateResponse(request, "incident.html", {
             "user": user, "inc": inc, "r": report, "approvals": approvals, "tokens": tokens,
             "evidence": inc.get("evidence") or {}, "audit": store.audit_log(incident_id)})
+
+    # ------------------------------------------------------------------ RCA (post-incident report)
+
+    def _rca(incident_id: str):
+        built = pipeline.rca(incident_id)
+        if not built:
+            raise HTTPException(404, "incident not found")
+        return built
+
+    @app.get("/api/v1/incidents/{incident_id}/rca")
+    def api_rca(incident_id: str, user: User = Depends(current_user)) -> dict[str, Any]:
+        return _rca(incident_id)[0].model_dump()
+
+    @app.get("/incidents/{incident_id}/rca.md")
+    def rca_markdown(incident_id: str, user: User = Depends(current_user)) -> Response:
+        return Response(_rca(incident_id)[1], media_type="text/markdown; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="RCA-{incident_id}.md"'})
+
+    @app.get("/incidents/{incident_id}/rca", response_class=HTMLResponse)
+    def rca_page(request: Request, incident_id: str, user: User = Depends(current_user)) -> HTMLResponse:
+        doc, _ = _rca(incident_id)
+        notes = store.rca_notes(incident_id)
+        return templates.TemplateResponse(request, "rca.html", {
+            "user": user, "r": doc, "notes": notes, "signed": bool(notes.get("signed_off_by")),
+            "csrf": csrf_token(settings.session_secret, user.name, f"rca:{incident_id}")})
+
+    @app.post("/incidents/{incident_id}/rca")
+    def rca_update(incident_id: str, csrf: str = Form(...), action: str = Form("save", pattern="^(save|sign_off)$"),
+                   actions_taken: str = Form("", max_length=5000), root_cause_confirmation: str = Form("", max_length=5000),
+                   lessons: str = Form("", max_length=5000), follow_ups: str = Form("", max_length=5000),
+                   user: User = Depends(approver)) -> RedirectResponse:
+        if not token_matches(csrf, csrf_token(settings.session_secret, user.name, f"rca:{incident_id}")):
+            raise HTTPException(403, "invalid form token")
+        if not store.get(incident_id):
+            raise HTTPException(404, "incident not found")
+        try:
+            store.save_rca_notes(incident_id, user.name, {
+                "actions_taken": actions_taken, "root_cause_confirmation": root_cause_confirmation,
+                "lessons": lessons, "follow_ups": follow_ups}, sign_off=action == "sign_off")
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from None
+        if action == "sign_off":
+            pipeline.send_rca(incident_id, final=True)  # records only; no cluster action
+        return RedirectResponse(f"/incidents/{incident_id}/rca", status_code=303)
 
     @app.post("/incidents/{incident_id}/approvals/{approval_id}")
     def incident_decide(incident_id: str, approval_id: int, decision: str = Form(..., pattern="^(approve|reject)$"),

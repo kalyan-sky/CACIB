@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}RCA {{ r.incident_id }}{% endblock %}
+{% block content %}
+{% set basis = {"evidence":"observed","hypothesis":"hypothesis","human":"engineer","unknown":"not established"} %}
+<p><a href="/incidents/{{ r.incident_id }}">&larr; incident {{ r.incident_id }}</a> · <a href="/incidents/{{ r.incident_id }}/rca.md">download Markdown</a></p>
+<h1><span class="sev sev-{{ r.severity }}">{{ r.severity }}</span> RCA {{ r.incident_id }}: {{ r.title }}</h1>
+<p><span class="pill {{ 'ok' if r.status == 'Final' else 'mid' }}">{{ r.status }}</span></p>
+
+<section class="card">
+  <table>
+    <tr><th>Cluster / env</th><td>{{ r.cluster }} / {{ r.environment }}</td><th>Namespace</th><td>{{ r.namespace or "-" }}</td></tr>
+    <tr><th>Service</th><td>{{ r.service or "-" }}</td><th>Owning team</th><td>{{ r.owner_team }}</td></tr>
+    <tr><th>Detected</th><td>{{ r.detected_at or "-" }}</td><th>Resolved</th><td>{{ r.resolved_at or "not yet" }}</td></tr>
+    <tr><th>Duration</th><td>{{ r.duration }}</td><th>Signed off</th><td>{{ r.signed_off }}</td></tr>
+    <tr><th>Alerts</th><td colspan="3">{{ r.alerts | join(", ") }}</td></tr>
+  </table>
+</section>
+
+<section class="card"><h2>1. Summary</h2><p>{{ r.executive_summary }}</p><h2>2. Impact</h2><p>{{ r.impact }}</p></section>
+
+<section class="card"><h2>3. Timeline</h2>
+  <table><tr><th>Time</th><th>Source</th><th>Event</th></tr>
+  {% for t in r.timeline %}<tr><td class="small">{{ t.time }}</td><td>{{ t.source }}</td><td>{{ t.event }}</td></tr>{% endfor %}</table>
+  <h2>4. Detection</h2><p>{{ r.detection }}</p>
+</section>
+
+<section class="card"><h2>5. Root cause</h2>
+  <p><b>{{ r.root_cause }}</b></p>
+  <p class="muted">{{ r.root_cause_status }}, {{ (r.root_cause_confidence * 100) | round | int }}% confidence · engineer confirmation: {{ r.root_cause_confirmation }}</p>
+  <h3>5 whys</h3>
+  <ol>{% for w in r.five_whys %}<li><b>{{ w.question }}</b> {{ w.answer }} <span class="pill {{ 'ok' if w.basis == 'evidence' else 'mid' }}">{{ basis[w.basis] }}</span></li>{% endfor %}</ol>
+  <h3>Evidence (observed)</h3>
+  <ul>{% for e in r.evidence %}<li><code>{{ e.source }}</code> {{ e.observation }}</li>{% else %}<li class="muted">none</li>{% endfor %}</ul>
+  {% if r.contributing_factors %}<h3>Contributing factors (hypotheses)</h3><ul>{% for f in r.contributing_factors %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
+</section>
+
+<section class="card"><h2>6. Resolution</h2>
+  <ul>{% for p in r.resolution_proposed %}<li>{{ p }}</li>{% endfor %}</ul>
+  <p><b>Approval:</b> {{ r.approval }}</p>
+  <p><b>Actions taken (engineer):</b> {{ r.actions_taken }}</p>
+  {% if r.verification %}<p><b>Verification:</b></p><pre>{{ r.verification | join("\n") }}</pre>{% endif %}
+</section>
+
+<section class="card"><h2>7. Corrective and preventive actions</h2>
+  <table><tr><th>#</th><th>Action</th><th>Type</th><th>Owner</th><th>Due</th><th>Status</th></tr>
+  {% for a in r.capa %}<tr><td>{{ loop.index }}</td><td>{{ a.action }}</td><td>{{ a.kind }}</td><td>{{ a.owner }}</td><td>{{ a.due }}</td><td>{{ a.status }}</td></tr>{% endfor %}</table>
+</section>
+
+<section class="card"><h2>8. Lessons learned</h2><ul>{% for l in r.lessons %}<li>{{ l }}</li>{% endfor %}</ul>
+  {% if r.open_questions %}<h2>9. Open questions</h2><ul>{% for q in r.open_questions %}<li>{{ q }}</li>{% endfor %}</ul>{% endif %}
+</section>
+
+{% if not signed %}
+<section class="card">
+  <h2>Complete the RCA (engineer)</h2>
+  <p class="muted">The agent cannot know what you did or confirm the cause. Fill this in after the fix; signing off makes the RCA final and emails it.</p>
+  {% if user.can_approve %}
+  <form method="post" action="/incidents/{{ r.incident_id }}/rca" class="rca-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Actions taken (what you changed, when, through which change/MR)<textarea name="actions_taken" rows="3">{{ notes.actions_taken }}</textarea></label>
+    <label>Root cause confirmation (confirm the agent's cause, or state the real one)<textarea name="root_cause_confirmation" rows="2">{{ notes.root_cause_confirmation }}</textarea></label>
+    <label>Lessons learned (one per line)<textarea name="lessons" rows="3">{{ notes.lessons }}</textarea></label>
+    <label>Extra follow-up actions (one per line)<textarea name="follow_ups" rows="2">{{ notes.follow_ups }}</textarea></label>
+    <div><button name="action" value="save">Save draft</button> <button name="action" value="sign_off" class="secondary">Sign off (final)</button></div>
+  </form>
+  {% else %}<p class="muted">Only approvers can complete and sign off an RCA.</p>{% endif %}
+</section>
+{% endif %}
+
+<section class="card"><details><summary>Appendix: read-only commands the agent ran</summary><pre>{{ r.commands_executed | join("\n") }}</pre></details></section>
+{% endblock %}

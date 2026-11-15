@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from . import runbooks
 from ..models import (INCONCLUSIVE, Command, Evidence, IncidentReport, InvestigationEvidence, NormalizedAlert,
                       ResolutionStep, severity_rank)
 
@@ -770,8 +771,21 @@ CHECKERS: list[Callable[[Ctx], Finding | None]] = [
 ]
 
 
+def _fill(cmd: str, c: Ctx) -> str:
+    for placeholder, value in (("<namespace>", c.alert.namespace), ("<pod>", c.alert.pod),
+                               ("<node>", c.alert.node), ("<app>", c.alert.deployment or c.alert.workload)):
+        if value:
+            cmd = cmd.replace(placeholder, value)
+    return cmd
+
+
 def inconclusive(c: Ctx) -> Finding:
+    """No checker explains the evidence. Use the alert's runbook if there is one; never invent a cause."""
+    rb = runbooks.lookup(c.alert.alertname)
     evidence: list[Evidence] = []
+    if rb:
+        text = c.alert.description or c.alert.summary or rb.meaning
+        evidence.append(Evidence(source="alert", observation=f"{c.alert.alertname} is firing: {text}"))
     for p in c.ev.pods[:2]:
         evidence.append(Evidence(source="pod.status", observation=f"pod {p['name']} phase {p.get('phase')}, containers "
                                  + ", ".join(f"{x['name']}={x['state']} ready={x.get('ready')} restarts="
@@ -780,12 +794,16 @@ def inconclusive(c: Ctx) -> Finding:
         evidence.append(Evidence(source="deployment.status", observation=str(c.ev.deployment.get("status"))))
     warnings = [e for e in c.ev.events if e.get("type") == "Warning"]
     evidence += [c.ev_event(e) for e in warnings[-3:]]
+    generic_factors = ["The condition may have been transient and already cleared (hypothesis)",
+                       "The cause may be outside Kubernetes (a dependency, the network, the cloud provider) (hypothesis)"]
+    runbook_checks = [D(_fill(cmd, c), why) for cmd, why in rb.checks] if rb else []
     return Finding(
-        "unknown", c.alert.summary or f"Alert {c.alert.alertname} fired; the collected evidence shows no known failure pattern.",
+        rb.category if rb else "unknown",
+        (f"{rb.meaning} ({c.alert.summary})" if rb and c.alert.summary else rb.meaning) if rb else
+        (c.alert.summary or f"Alert {c.alert.alertname} fired; the collected evidence shows no known failure pattern."),
         INCONCLUSIVE, "inconclusive", 0.2 if evidence else 0.0, evidence,
-        factors=["The condition may have been transient and already cleared (hypothesis)",
-                 "The cause may be outside Kubernetes (a dependency, the network, the cloud provider) (hypothesis)"],
-        investigations=[
+        factors=([f"{cause} (hypothesis)" for cause in rb.likely_causes] if rb else []) + generic_factors,
+        investigations=runbook_checks + [
             D(f"kubectl -n {c.ns} get events --sort-by=.lastTimestamp | tail -30", "Recent events in the namespace."),
             D(f"kubectl -n {c.ns} get pods -o wide", "Current pod status."),
             D("Open the Grafana dashboards for the namespace/pod around the alert time",

@@ -117,7 +117,8 @@ class NormalizedAlert(BaseModel):
             namespace=_k8s_name(lbl.get("namespace") or lbl.get("exported_namespace")),
             pod=_k8s_name(lbl.get("pod")),
             container=_k8s_name(lbl.get("container")),
-            deployment=_k8s_name(lbl.get("deployment")),
+            # the bank's own alerts name the workload in `app`
+            deployment=_k8s_name(lbl.get("deployment") or (lbl.get("app") if not lbl.get("pod") else None)),
             node=_k8s_name(node),
             pvc=_k8s_name(lbl.get("persistentvolumeclaim")),
             service=_k8s_name(lbl.get("service")) if lbl.get("job") != lbl.get("service") else None,

@@ -12,7 +12,7 @@
   <tr><td style="padding:2px 12px 2px 0;color:#475467">Affected</td><td>{{ r.affected_resources | join(", ") or "-" }}</td></tr>
   <tr><td style="padding:2px 12px 2px 0;color:#475467">Started</td><td>{{ r.started_at or "-" }}</td></tr>
   <tr><td style="padding:2px 12px 2px 0;color:#475467">Approval</td><td><b>{{ approval_status }}</b> (nothing has been changed in the cluster)</td></tr>
-  {% if link %}<tr><td style="padding:2px 12px 2px 0;color:#475467">Dashboard</td><td><a href="{{ link }}">{{ link }}</a></td></tr>{% endif %}
+  {% if link %}<tr><td style="padding:2px 12px 2px 0;color:#475467">Dashboard</td><td><a href="{{ link }}">{{ link }}</a> · <a href="{{ link }}/rca">RCA</a></td></tr>{% endif %}
 </table>
 
 <h2 style="font-size:16px;margin:16px 0 4px">Summary</h2>

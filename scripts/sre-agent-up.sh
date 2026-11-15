@@ -123,7 +123,7 @@ k -n sre-agent rollout status deployment/sre-agent --timeout=300s
 
 # ------------------------------------------------------------------ alerts -> agent
 info "Incident alert rules and Alertmanager routing to the agent"
-k apply -f "$ROOT/platform/monitoring/k8s-incident-rules.yaml" >/dev/null
+k apply -f "$ROOT/platform/monitoring/k8s-incident-rules.yaml" -f "$ROOT/platform/monitoring/coverage-rules.yaml" >/dev/null
 patch=$(cat <<JSON
 {"spec":{"source":{"helm":{"valuesObject":{"alertmanager":{
   "alertmanagerSpec":{"secrets":["sre-agent-webhook"]},

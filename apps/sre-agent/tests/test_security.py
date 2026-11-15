@@ -78,7 +78,7 @@ def test_approval_does_not_touch_the_cluster(settings, store, smtp):
                                                                                  pod="app-7d9f8c6b5d-x7k2p")),
                         headers={"Authorization": "Bearer webhook-token-0123456789"})
         incident_id = r.json()["created"][0]
-        app.state.pipeline.process(incident_id, app.state.pipeline.queue.get_nowait()[1])
+        app.state.pipeline.process(incident_id, app.state.pipeline.queue.get_nowait()[2])
         calls_before = list(fake.calls)
         approval = store.approvals(incident_id=incident_id)[0]
         r = client.post(f"/api/v1/approvals/{approval['id']}/approve", json={"comment": "go"},

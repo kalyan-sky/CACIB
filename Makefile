@@ -6,7 +6,7 @@ CLUSTER ?= bank-sim
 IMAGE   ?= $(shell cat .sim-state/image 2>/dev/null || echo bank-sim/txn-service:1.5.0)
 CONTEXT ?= $(shell cat .sim-state/context 2>/dev/null || echo kind-$(CLUSTER))
 
-.PHONY: help up down eks-up eks-deploy eks-down tf-up gitops-bootstrap monitoring sre-agent-test sre-agent-up sre-agent-verify sre-agent-down tf-down gitops-pull portal-lambda portal-lambda-down render apply diff build audit audit-offline capacity inventory status test
+.PHONY: help up down eks-up eks-deploy eks-down tf-up gitops-bootstrap monitoring sre-agent-test sre-agent-up sre-agent-verify sre-agent-down alert-coverage tf-down gitops-pull portal-lambda portal-lambda-down render apply diff build audit audit-offline capacity inventory status test
 
 help: ## show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-14s %s\n", $$1, $$2}'
@@ -48,6 +48,9 @@ sre-agent-up: ## SRE agent: build, deploy read-only, route Alertmanager to it; S
 
 sre-agent-verify: ## SRE agent: RBAC can-i checks, health, routing; ARGS=--incident also runs a test incident
 	./scripts/sre-agent-verify.sh $(ARGS)
+
+alert-coverage: ## is every monitored job alerted, and does every alert reach the SRE agent? (live, read-only)
+	$(PY) tools/alert_coverage.py
 
 sre-agent-down: ## SRE agent: remove it and its Alertmanager routing
 	./scripts/sre-agent-down.sh
@@ -95,6 +98,7 @@ status: ## estate health and customer-facing SLOs
 test: ## offline checks: Go tests, render both profiles, audit, script syntax
 	cd apps/txn-service && go vet ./... && go test ./...
 	$(PY) -m unittest discover -s lambda/portal-edge
+	$(PY) -m unittest discover -s tools -p 'test_*.py'
 	$(PY) tools/platform.py render --profile full --out /tmp/bank-sim-full >/dev/null
 	$(PY) tools/platform.py audit --path /tmp/bank-sim-full >/dev/null
 	$(PY) tools/platform.py render --profile lite --out /tmp/bank-sim-lite

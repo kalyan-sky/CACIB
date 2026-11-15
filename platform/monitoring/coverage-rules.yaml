@@ -1,0 +1,77 @@
+# Alert coverage for components that were monitored (or should be) but had no alerts:
+# Argo CD (delivery), the VPC CNI (pod IP addresses), Grafana. Everything else is covered
+# by kube-prometheus-stack's rules, platform/monitoring/k8s-incident-rules.yaml,
+# bank-rules.yaml and the agent's own rules. Check with: make alert-coverage
+# Applied by scripts/sre-agent-up.sh.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd-metrics
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [argocd]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-metrics
+  endpoints:
+    - port: metrics
+      interval: 60s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: aws-node
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [kube-system]
+  selector:
+    matchLabels:
+      k8s-app: aws-node
+  podMetricsEndpoints:
+    - port: metrics # 61678 on the aws-node container
+      interval: 60s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-coverage
+  namespace: monitoring
+spec:
+  groups:
+    - name: delivery
+      rules:
+        - alert: ArgoAppDegraded
+          expr: max by (name, namespace, dest_namespace) (argocd_app_info{health_status=~"Degraded|Missing"}) == 1
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "Argo CD application {{ $labels.name }} is {{ $labels.health_status }}"
+        - alert: ArgoAppSyncFailed
+          expr: sum by (name) (increase(argocd_app_sync_total{phase=~"Error|Failed"}[15m])) > 0
+          labels: {severity: warning}
+          annotations:
+            summary: "Argo CD failed to sync {{ $labels.name }}: the latest Git change is not deployed"
+        - alert: ArgoAppOutOfSync
+          expr: max by (name) (argocd_app_info{sync_status="OutOfSync"}) == 1
+          for: 30m
+          labels: {severity: info}
+          annotations:
+            summary: "Argo CD application {{ $labels.name }} has drifted from Git for 30 minutes"
+    - name: networking
+      rules:
+        - alert: AwsCniIpPoolLow
+          expr: sum(awscni_assigned_ip_addresses) / sum(awscni_total_ip_addresses) > 0.90
+          for: 15m
+          labels: {severity: warning}
+          annotations:
+            summary: "The VPC CNI has assigned {{ $value | humanizePercentage }} of its pod IP addresses"
+    - name: observability
+      rules:
+        - alert: GrafanaDown
+          expr: absent(up{job="monitoring-grafana"} == 1)
+          for: 5m
+          labels: {severity: warning, namespace: monitoring}
+          annotations:
+            summary: "Grafana is not answering: dashboards are unavailable (alerting still works)"

@@ -29,8 +29,8 @@ Alertmanager ── group, dedupe, inhibit ──► POST /api/v1/alerts?cluster
 
 | Area | Before | Now |
 |---|---|---|
-| Prometheus, Alertmanager, Grafana | Installed by Argo CD (`make monitoring`); Alertmanager had no receiver | Alertmanager routes to the agent (grouping, dedup, inhibition); 17 extra incident rules |
-| Python service | none (only `tools/platform.py`) | `apps/sre-agent/` FastAPI app, 44 tests |
+| Prometheus, Alertmanager, Grafana | Installed by Argo CD (`make monitoring`); Alertmanager had no receiver | Alertmanager routes to the agent (grouping, dedup, inhibition); 17 incident rules + coverage rules (Argo CD, VPC CNI IPs, Grafana); `make alert-coverage` |
+| Python service | none (only `tools/platform.py`) | `apps/sre-agent/` FastAPI app, 50 tests |
 | RBAC for automation | team RoleBindings only | `sre-agent-readonly`: get/list/watch, no Secrets/ConfigMaps/exec/writes |
 | Email, AI, approvals, incident UI | none | added; LLM off by default (your choice: rule engine) |
 | Image builds | crane for the Go app | `ci/build-sre-agent.sh`: crane, no Docker; pushes to ECR from the jump host |
@@ -75,6 +75,55 @@ Prerequisites: the EKS cluster with `compute = "ec2"`, `make gitops-bootstrap` a
 
 Practise with the classics: `./k8s-classics.sh start c02` (ImagePullBackOff), `c03` (missing Secret key),
 `c04` (Pending), `c07` (OOMKilled), `c14` (PVC), `c16` (CoreDNS). Compare the agent's diagnosis with yours.
+
+## How it finds a root cause (and what it does not use)
+
+It handles **any alert** Prometheus raises in real time, not only the lab's scenarios. For each one:
+
+1. **Live evidence from the cluster at that moment** (read-only): pod and container states, exit codes, current
+   and previous logs, events, the Deployment and ReplicaSets, nodes, metrics, Services/endpoints, PVCs, quotas.
+2. **Rule engine: generic Kubernetes failure patterns** (below). They match evidence, not names, so they work for
+   any workload: an OOMKilled pod in a namespace the agent has never seen is still OOMKilled.
+3. **Runbooks for about 40 alert types** without a pod or node to inspect (Argo CD, VPC CNI IPs, quotas,
+   disks, Jobs, Prometheus/Alertmanager, the bank's business alerts...). They give the likely causes **as
+   hypotheses** and the read-only checks that tell them apart. They never claim a cause.
+4. **Optional LLM** (off: you chose the rule engine). Switched on, it reasons over the same evidence for
+   incidents no rule covers; its answer is validated and every evidence item must exist in what was collected.
+
+Not used today: no external knowledge base, no web search, no memory of past incidents. A novel failure without
+an LLM ends as **inconclusive** with next steps; that is deliberate, rather than a confident wrong answer.
+Signed-off RCAs are stored, so "similar past incidents" (same type and workload: what the cause and fix were)
+is a natural next step.
+
+## Root cause analysis (RCA) and the human in the loop
+
+The agent stays advisory: people approve and carry out every change. For each incident it keeps an RCA in a
+fixed format (sample: [`examples/rca-example.md`](examples/rca-example.md)):
+
+| Section | Filled by |
+|---|---|
+| Header: status, severity, cluster, namespace, service, owning team, detected/resolved, duration | agent |
+| 1 Summary · 2 Impact · 4 Detection | agent |
+| 3 Timeline: alert start, Kubernetes events, investigation, email, approval, resolution, sign-off | agent + audit log |
+| 5 Root cause, **5 whys** (each step marked *observed*, *hypothesis* or *not established*), evidence, contributing factors | agent; **engineer confirms** |
+| 6 Resolution: proposed fix (not executed), approval decision, **actions taken**, verification | agent + **engineer** |
+| 7 Corrective / preventive / detective actions (CAPA) with owner and due date | agent per incident type + **engineer follow-ups** |
+| 8 Lessons learned · 9 Open questions · appendix of read-only commands | **engineer** · agent |
+
+Lifecycle: **Draft** while the incident is open → alert resolves → **RCA for review** email (HTML + Markdown
+attachment) → an approver completes "actions taken", "root cause confirmation", lessons, follow-ups in the
+dashboard (**Incident → Root cause analysis**) and signs off → **Final RCA** email; the RCA is then locked.
+Every save and sign-off is in the audit log. Download any RCA as Markdown (`/incidents/<id>/rca.md`) for the
+change ticket or the wiki; JSON at `/api/v1/incidents/<id>/rca`.
+
+## Alert coverage: everything monitored is alerted
+
+- Every alert goes to the agent (Alertmanager default receiver), except `Watchdog`/`InfoInhibitor` (heartbeats).
+- `platform/monitoring/coverage-rules.yaml` adds scraping and alerts for components that had none: Argo CD
+  (Degraded, sync failed, drift), VPC CNI pod-IP exhaustion, Grafana down.
+- `make alert-coverage` (jump host, read-only) lists every scrape job with its targets up/down and the alert
+  rules that use its metrics, rules that fail to evaluate, and the routing; it flags anything monitored without
+  alerts. `--strict` makes that a failure (for CI or a daily check).
 
 ## What it detects (rule engine)
 
@@ -152,7 +201,7 @@ Point each cluster's Alertmanager at `...?cluster=<its name>`. Incidents, histor
 
 ## Tests
 
-`make sre-agent-test` (also in the GitLab pipeline as `sre-agent-test`): 44 tests, no cluster needed.
+`make sre-agent-test` (also in the GitLab pipeline as `sre-agent-test`): 50 tests, no cluster needed.
 - Scenarios against a fake cluster: CrashLoopBackOff, OOMKilled, ImagePullBackOff, Pending (CPU, taint),
   Node NotReady, insufficient evidence, missing objects, CreateContainerConfigError, PVC, CoreDNS, RBAC 403s.
 - Security: allowlist, static scan for write/exec/Secret calls, RBAC manifest, redaction, approval makes zero API calls.

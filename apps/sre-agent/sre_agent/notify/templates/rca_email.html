@@ -1,0 +1,51 @@
+<!doctype html>
+<html><body style="font-family:Segoe UI,Helvetica,Arial,sans-serif;color:#1f2328;max-width:860px;margin:0 auto;padding:16px">
+{% set sev_color = {"CRITICAL":"#b42318","HIGH":"#c4320a","MEDIUM":"#b54708","LOW":"#1d4ed8","INFO":"#475467"}[r.severity] %}
+{% set basis = {"evidence":"observed","hypothesis":"hypothesis","human":"engineer","unknown":"not established"} %}
+<p style="margin:0 0 4px;font-size:13px;color:#475467">{{ "Final root cause analysis" if final else "Root cause analysis for review: please complete and sign off" }}</p>
+<h1 style="font-size:20px;margin:0 0 10px"><span style="background:{{ sev_color }};color:#fff;padding:2px 8px;border-radius:4px;font-size:14px">{{ r.severity }}</span>
+ RCA {{ r.incident_id }}: {{ r.title }}</h1>
+<table style="border-collapse:collapse;font-size:14px;margin-bottom:12px">
+{% for k, v in [("Status", r.status), ("Cluster / env", r.cluster ~ " / " ~ r.environment), ("Namespace", r.namespace or "-"),
+                ("Service", r.service or "-"), ("Owning team", r.owner_team), ("Detected", r.detected_at or "-"),
+                ("Resolved", r.resolved_at or "not yet"), ("Duration", r.duration), ("Signed off", r.signed_off)] %}
+<tr><td style="padding:2px 14px 2px 0;color:#475467">{{ k }}</td><td>{{ v }}</td></tr>
+{% endfor %}
+{% if link %}<tr><td style="padding:2px 14px 2px 0;color:#475467">Review</td><td><a href="{{ link }}">{{ link }}</a></td></tr>{% endif %}
+</table>
+<h2 style="font-size:16px;margin:16px 0 4px">1. Summary</h2><p style="margin:0">{{ r.executive_summary }}</p>
+<h2 style="font-size:16px;margin:16px 0 4px">2. Impact</h2><p style="margin:0">{{ r.impact }}</p>
+<h2 style="font-size:16px;margin:16px 0 4px">3. Timeline</h2>
+<table style="border-collapse:collapse;font-size:13px;width:100%">
+{% for t in r.timeline %}<tr><td style="padding:3px 10px 3px 0;border-bottom:1px solid #eaeef2;white-space:nowrap">{{ t.time }}</td>
+<td style="padding:3px 10px 3px 0;border-bottom:1px solid #eaeef2;color:#475467">{{ t.source }}</td>
+<td style="padding:3px 0;border-bottom:1px solid #eaeef2">{{ t.event }}</td></tr>{% endfor %}
+</table>
+<h2 style="font-size:16px;margin:16px 0 4px">4. Detection</h2><p style="margin:0">{{ r.detection }}</p>
+<h2 style="font-size:16px;margin:16px 0 4px">5. Root cause</h2>
+<p style="margin:0"><b>{{ r.root_cause }}</b></p>
+<p style="margin:4px 0;color:#475467">{{ r.root_cause_status }}, {{ (r.root_cause_confidence * 100) | round | int }}% confidence. Engineer confirmation: {{ r.root_cause_confirmation }}</p>
+<h3 style="font-size:14px;margin:10px 0 4px">5 whys</h3>
+<ol style="margin:0;padding-left:20px">{% for w in r.five_whys %}<li><b>{{ w.question }}</b> {{ w.answer }} <i style="color:#475467">({{ basis[w.basis] }})</i></li>{% endfor %}</ol>
+<h3 style="font-size:14px;margin:10px 0 4px">Evidence (observed)</h3>
+<ul style="margin:0;padding-left:20px">{% for e in r.evidence %}<li><code style="color:#475467">{{ e.source }}</code> {{ e.observation }}</li>{% else %}<li>none</li>{% endfor %}</ul>
+{% if r.contributing_factors %}<h3 style="font-size:14px;margin:10px 0 4px">Contributing factors (hypotheses)</h3>
+<ul style="margin:0;padding-left:20px">{% for f in r.contributing_factors %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
+<h2 style="font-size:16px;margin:16px 0 4px">6. Resolution</h2>
+<ul style="margin:0;padding-left:20px">{% for p in r.resolution_proposed %}<li>{{ p }}</li>{% endfor %}</ul>
+<p style="margin:6px 0 0"><b>Approval:</b> {{ r.approval }}</p>
+<p style="margin:4px 0 0"><b>Actions taken (engineer):</b> {{ r.actions_taken }}</p>
+<h2 style="font-size:16px;margin:16px 0 4px">7. Corrective and preventive actions</h2>
+<table style="border-collapse:collapse;font-size:13px;width:100%">
+<tr style="color:#475467;text-align:left"><th style="padding:3px 8px 3px 0">#</th><th style="padding:3px 8px 3px 0">Action</th><th style="padding:3px 8px 3px 0">Type</th><th style="padding:3px 8px 3px 0">Owner</th><th>Due</th></tr>
+{% for a in r.capa %}<tr><td style="padding:3px 8px 3px 0;border-bottom:1px solid #eaeef2">{{ loop.index }}</td><td style="padding:3px 8px 3px 0;border-bottom:1px solid #eaeef2">{{ a.action }}</td>
+<td style="padding:3px 8px 3px 0;border-bottom:1px solid #eaeef2">{{ a.kind }}</td><td style="padding:3px 8px 3px 0;border-bottom:1px solid #eaeef2">{{ a.owner }}</td><td style="border-bottom:1px solid #eaeef2">{{ a.due }}</td></tr>{% endfor %}
+</table>
+<h2 style="font-size:16px;margin:16px 0 4px">8. Lessons learned</h2>
+<ul style="margin:0;padding-left:20px">{% for l in r.lessons %}<li>{{ l }}</li>{% endfor %}</ul>
+{% if r.open_questions %}<h2 style="font-size:16px;margin:16px 0 4px">9. Open questions</h2>
+<ul style="margin:0;padding-left:20px">{% for q in r.open_questions %}<li>{{ q }}</li>{% endfor %}</ul>{% endif %}
+<p style="font-size:12px;color:#475467;border-top:1px solid #d0d7de;padding-top:8px;margin-top:16px">
+Drafted by the read-only SRE agent ({{ r.analysis_engine }}); the agent made no changes. Observed facts, hypotheses and engineer input are labelled.
+The Markdown version is attached (RCA-{{ r.incident_id }}.md).</p>
+</body></html>

@@ -14,6 +14,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from .. import metrics
 from ..config import Settings
 from ..models import KIND_LABELS, IncidentReport, severity_rank
+from ..rca import Rca
 from ..store import Store
 
 log = logging.getLogger(__name__)
@@ -81,11 +82,38 @@ class EmailNotifier:
         link = f"{s.dashboard_url.rstrip('/')}/incidents/{report.incident_id}" if s.dashboard_url else None
         msg = EmailMessage()
         msg["Subject"] = subject(report)
-        msg["From"] = s.smtp.sender
         msg["To"] = ", ".join(to)
         msg["X-SRE-Incident"] = report.incident_id
         msg.set_content(render_text(report, approval_status, link))
         msg.add_alternative(render_html(report, environment, approval_status, link), subtype="html")
+        self._send(msg)
+        self.store.record_email(key, report.incident_id)
+        return "sent"
+
+    def send_rca(self, rca: Rca, markdown: str, final: bool) -> str:
+        """The RCA as an HTML email with the Markdown version attached (for tickets and wikis)."""
+        s = self.settings
+        if not s.smtp.enabled or severity_rank(rca.severity) > severity_rank(s.email_min_severity):
+            return "skipped"
+        to = s.recipients_for(rca.environment, rca.severity)
+        if not to:
+            return "skipped"
+        link = f"{s.dashboard_url.rstrip('/')}/incidents/{rca.incident_id}/rca" if s.dashboard_url else None
+        msg = EmailMessage()
+        msg["Subject"] = (f"[{'FINAL RCA' if final else 'RCA FOR REVIEW'}] {rca.incident_id} - {rca.title} - "
+                          f"{rca.namespace or 'cluster-wide'}")
+        msg["To"] = ", ".join(to)
+        msg["X-SRE-Incident"] = rca.incident_id
+        msg.set_content(markdown)
+        msg.add_alternative(_env.get_template("rca_email.html").render(r=rca, link=link, final=final), subtype="html")
+        msg.add_attachment(markdown.encode(), maintype="text", subtype="markdown",
+                           filename=f"RCA-{rca.incident_id}.md")
+        self._send(msg)
+        return "sent"
+
+    def _send(self, msg: EmailMessage) -> None:
+        s = self.settings
+        msg["From"] = s.smtp.sender
         try:
             with smtplib.SMTP(s.smtp.host or "", s.smtp.port, timeout=s.smtp.timeout_seconds) as smtp:
                 if s.smtp.starttls:
@@ -98,8 +126,6 @@ class EmailNotifier:
             # never log the password; SMTP errors don't contain it
             raise EmailError(f"{type(e).__name__}: {str(e)[:300]}") from None
         metrics.EMAILS_SENT.inc()
-        self.store.record_email(key, report.incident_id)
-        return "sent"
 
 
 class EmailError(RuntimeError):

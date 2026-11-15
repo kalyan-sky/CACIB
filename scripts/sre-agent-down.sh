@@ -9,7 +9,8 @@ export KUBE_CONTEXT
 
 k -n argocd patch application monitoring --type merge \
   -p '{"spec":{"source":{"helm":{"valuesObject":{"alertmanager":null}}}}}' >/dev/null 2>&1 || true
-k delete -f "$ROOT/platform/monitoring/k8s-incident-rules.yaml" --ignore-not-found >/dev/null
+k delete -f "$ROOT/platform/monitoring/k8s-incident-rules.yaml" -f "$ROOT/platform/monitoring/coverage-rules.yaml" \
+  --ignore-not-found >/dev/null
 k -n monitoring delete secret sre-agent-webhook --ignore-not-found >/dev/null
 k -n sre-agent delete svc sre-agent-dashboard --ignore-not-found --wait=true >/dev/null
 k delete namespace sre-agent --ignore-not-found >/dev/null

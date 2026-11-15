@@ -61,6 +61,17 @@ CREATE TABLE IF NOT EXISTS audit_log (
     incident_id TEXT,
     details TEXT
 );
+CREATE TABLE IF NOT EXISTS rca_notes (     -- the parts of the RCA only humans can write
+    incident_id TEXT PRIMARY KEY REFERENCES incidents(id),
+    actions_taken TEXT NOT NULL DEFAULT '',
+    root_cause_confirmation TEXT NOT NULL DEFAULT '',
+    lessons TEXT NOT NULL DEFAULT '',
+    follow_ups TEXT NOT NULL DEFAULT '',
+    updated_by TEXT,
+    updated_at TEXT,
+    signed_off_by TEXT,
+    signed_off_at TEXT
+);
 CREATE TABLE IF NOT EXISTS email_dedup (
     dedup_key TEXT PRIMARY KEY,
     incident_id TEXT,
@@ -126,7 +137,9 @@ class Store:
             return incident_id, True
 
     def save_investigation(self, incident_id: str, evidence: dict[str, Any], report: dict[str, Any]) -> None:
-        self._x("UPDATE incidents SET status='open', evidence_json=?, report_json=?, severity=?, incident_type=?, "
+        # an alert can resolve while the investigation runs: keep 'resolved'
+        self._x("UPDATE incidents SET status=CASE WHEN status='resolved' THEN 'resolved' ELSE 'open' END, "
+                "evidence_json=?, report_json=?, severity=?, incident_type=?, "
                 "updated_at=? WHERE id=?",
                 (json.dumps(evidence), json.dumps(report), report.get("severity"), report.get("incident_type"),
                  iso(), incident_id))
@@ -244,6 +257,37 @@ class Store:
 
     def pending_approval_count(self) -> int:
         return self._q("SELECT COUNT(*) AS n FROM approvals WHERE status='Pending'")[0]["n"]
+
+    # ------------------------------------------------------------------ RCA notes (human input)
+
+    RCA_FIELDS = ("actions_taken", "root_cause_confirmation", "lessons", "follow_ups")
+
+    def rca_notes(self, incident_id: str) -> dict[str, Any]:
+        rows = self._q("SELECT * FROM rca_notes WHERE incident_id=?", (incident_id,))
+        return dict(rows[0]) if rows else {k: "" for k in self.RCA_FIELDS}
+
+    def save_rca_notes(self, incident_id: str, user: str, fields: dict[str, str], sign_off: bool = False) -> dict[str, Any]:
+        with self._lock:
+            if self.rca_notes(incident_id).get("signed_off_by"):
+                raise ValueError("the RCA is already signed off")
+            values = {k: (fields.get(k) or "")[:5000] for k in self.RCA_FIELDS}
+            if sign_off and not values["actions_taken"].strip():
+                raise ValueError("describe the actions taken before signing off")
+            self._x("INSERT INTO rca_notes (incident_id, actions_taken, root_cause_confirmation, lessons, follow_ups,"
+                    " updated_by, updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(incident_id) DO UPDATE SET "
+                    "actions_taken=excluded.actions_taken, root_cause_confirmation=excluded.root_cause_confirmation,"
+                    " lessons=excluded.lessons, follow_ups=excluded.follow_ups, updated_by=excluded.updated_by,"
+                    " updated_at=excluded.updated_at",
+                    (incident_id, *values.values(), user, iso()))
+            self.audit(user, "rca.updated", incident_id, {k: bool(v) for k, v in values.items()})
+            if sign_off:
+                self._x("UPDATE rca_notes SET signed_off_by=?, signed_off_at=? WHERE incident_id=?",
+                        (user, iso(), incident_id))
+                self.audit(user, "rca.signed_off", incident_id)
+            return self.rca_notes(incident_id)
+
+    def audit_done(self, incident_id: str, action: str) -> bool:
+        return bool(self._q("SELECT 1 FROM audit_log WHERE incident_id=? AND action=? LIMIT 1", (incident_id, action)))
 
     # ------------------------------------------------------------------ audit + email dedup
 

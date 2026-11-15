@@ -46,6 +46,7 @@ python-and-scripts:
   script:
     - pip install -q -r requirements.txt
     - python -m unittest discover -s lambda/portal-edge
+    - python -m unittest discover -s tools -p 'test_*.py'
     - for f in sim.sh k8s-classics.sh scripts/*.sh scenarios/*/*.sh ci/*.sh classics/*/*.sh; do bash -n "$f"; done
 
 sre-agent-test:

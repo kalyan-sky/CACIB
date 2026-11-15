@@ -20,6 +20,7 @@ from .diagnostics import DiagnosticEngine
 from .k8s.readonly import KubeReader
 from .models import AmAlert, IncidentReport, InvestigationEvidence, NormalizedAlert
 from .notify.email import EmailError, EmailNotifier
+from .rca import Rca, build_rca, to_markdown
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -33,7 +34,8 @@ class Pipeline:
         self.kube_factory = kube_factory  # cluster name -> a reader with THAT cluster's credentials
         self.notifier = notifier
         self.analyzer = analyzer
-        self.queue: asyncio.Queue[tuple[str, NormalizedAlert]] = asyncio.Queue(maxsize=1000)
+        # ("investigate", incident_id, alert) or ("rca", incident_id, None)
+        self.queue: asyncio.Queue[tuple[str, str, NormalizedAlert | None]] = asyncio.Queue(maxsize=1000)
         self._workers: list[asyncio.Task[None]] = []
 
     # ------------------------------------------------------------------ intake (called by the webhook)
@@ -50,6 +52,7 @@ class Pipeline:
                 ids = self.store.resolve(na.correlation_key)
                 for i in ids:
                     self.store.audit("alertmanager", "incident.resolved", i, {"alertname": na.alertname})
+                    self._enqueue(("rca", i, None))  # the RCA goes out for review once it is resolved
                 resolved += ids
                 metrics.ALERTS_PROCESSED.labels(cluster.name, "resolved").inc()
                 continue
@@ -60,16 +63,22 @@ class Pipeline:
             if is_new:
                 metrics.INCIDENTS.labels(cluster.name, na.severity).inc()
                 self.store.audit("alertmanager", "incident.created", incident_id, {"alertname": na.alertname})
-                try:
-                    self.queue.put_nowait((incident_id, na))
-                except asyncio.QueueFull:
+                if not self._enqueue(("investigate", incident_id, na)):
                     self.store.mark_failed(incident_id, "investigation queue full")
-                metrics.QUEUE_DEPTH.set(self.queue.qsize())
                 created.append(incident_id)
             else:
                 metrics.ALERTS_PROCESSED.labels(cluster.name, "correlated").inc()
                 attached.append(incident_id)
         return {"created": created, "attached": attached, "resolved": resolved}
+
+    def _enqueue(self, job: tuple[str, str, NormalizedAlert | None]) -> bool:
+        """Called on the event loop (the webhook handler is async), so the asyncio queue is safe to use."""
+        try:
+            self.queue.put_nowait(job)
+        except asyncio.QueueFull:
+            return False
+        metrics.QUEUE_DEPTH.set(self.queue.qsize())
+        return True
 
     # ------------------------------------------------------------------ workers
 
@@ -85,10 +94,13 @@ class Pipeline:
 
     async def _worker(self, n: int) -> None:
         while True:
-            incident_id, alert = await self.queue.get()
+            kind, incident_id, alert = await self.queue.get()
             metrics.QUEUE_DEPTH.set(self.queue.qsize())
             try:
-                await asyncio.to_thread(self.process, incident_id, alert)
+                if kind == "investigate" and alert is not None:
+                    await asyncio.to_thread(self.process, incident_id, alert)
+                elif kind == "rca":
+                    await asyncio.to_thread(self.send_rca, incident_id)
             except Exception:
                 log.exception("worker failed", extra={"incident": incident_id})
             finally:
@@ -153,6 +165,8 @@ class Pipeline:
                          {"type": report.incident_type, "confidence": report.root_cause_confidence,
                           "engine": report.analysis_engine, "api_calls": len(evidence.commands_executed)})
         self.send_email(incident_id)
+        if (self.store.get(incident_id) or {}).get("status") == "resolved":
+            self.send_rca(incident_id)  # resolved before we finished: the RCA job had nothing to send yet
         metrics.ALERTS_PROCESSED.labels(alert.cluster, "investigated").inc()
         log.info("incident investigated", extra={"incident": incident_id, "cluster": alert.cluster,
                                                  "namespace": alert.namespace, "type": report.incident_type,
@@ -190,6 +204,33 @@ class Pipeline:
             log.warning("email failed", extra={"incident": incident_id, "error": str(e)})
             self.store.set_email_status(incident_id, "failed", str(e))
             status = "failed"
+        if status in ("sent", "failed"):
+            self.store.audit("sre-agent", f"email.{status}", incident_id)
+        return status
+
+    def rca(self, incident_id: str) -> tuple[Rca, str] | None:
+        inc = self.store.get(incident_id)
+        if not inc:
+            return None
+        doc = build_rca(inc, self.store.approvals(incident_id=incident_id), self.store.audit_log(incident_id, limit=500),
+                        self.store.rca_notes(incident_id))
+        return doc, to_markdown(doc)
+
+    def send_rca(self, incident_id: str, final: bool = False) -> str:
+        """Email the RCA once for review (on resolution) and once when an engineer signs it off."""
+        action = "rca.emailed.final" if final else "rca.emailed"
+        if self.store.audit_done(incident_id, action):
+            return "deduplicated"
+        built = self.rca(incident_id)
+        if not built or not (self.store.get(incident_id) or {}).get("report"):
+            return "skipped"
+        try:
+            status = self.notifier.send_rca(*built, final=final)
+        except EmailError as e:
+            log.warning("RCA email failed", extra={"incident": incident_id, "error": str(e)})
+            return "failed"
+        if status == "sent":
+            self.store.audit("sre-agent", action, incident_id)
         return status
 
 

@@ -31,10 +31,19 @@ def app(settings, store, fake, smtp):
 def ingest(client, app, *alerts, cluster="test-eks"):
     r = client.post(f"/api/v1/alerts?cluster={cluster}", json=webhook(*alerts), headers=TOKEN)
     assert r.status_code == 202, r.text
-    while not app.state.pipeline.queue.empty():
-        incident_id, na = app.state.pipeline.queue.get_nowait()
-        app.state.pipeline.process(incident_id, na)
+    drain(app)
     return r.json()
+
+
+def drain(app):
+    """Run queued jobs synchronously, as the background workers would."""
+    p = app.state.pipeline
+    while not p.queue.empty():
+        kind, incident_id, na = p.queue.get_nowait()
+        if kind == "investigate":
+            p.process(incident_id, na)
+        else:
+            p.send_rca(incident_id)
 
 
 def test_webhook_requires_token(app):
@@ -98,6 +107,7 @@ def test_correlation_dedup_and_resolution(app, store, smtp):
         r = c.post("/api/v1/alerts?cluster=test-eks",
                    json=webhook(am_alert("KubePodCrashLooping", status="resolved", namespace=NS, pod=POD)), headers=TOKEN)
         assert r.json()["resolved"] == first["created"]
+        drain(app)
         assert store.get(first["created"][0])["status"] == "resolved"
 
 
@@ -108,7 +118,8 @@ def test_email_dedup_across_incidents(app, store, smtp):
                json=webhook(am_alert("KubePodCrashLooping", status="resolved", namespace=NS, pod=POD)))
         b = ingest(c, app, am_alert("KubePodCrashLooping", namespace=NS, pod=POD))
     assert a["created"] != b["created"]
-    assert len(smtp.sent) == 1  # same diagnosis again within the window: no second email
+    reports = [m for m in smtp.sent if "Kubernetes Incident Detected" in m["Subject"]]
+    assert len(reports) == 1  # same diagnosis again within the window: no second incident email
     assert store.get(b["created"][0])["email_status"] == "deduplicated"
 
 

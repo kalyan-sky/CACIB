@@ -3,6 +3,7 @@
 {% block content %}
 <p><a href="/">&larr; all incidents</a></p>
 <h1><span class="sev sev-{{ inc.severity }}">{{ inc.severity }}</span> {{ inc.id }} · {{ inc.incident_type }} <span class="muted">({{ inc.status }})</span></h1>
+<p><a href="/incidents/{{ inc.id }}/rca"><b>Root cause analysis (RCA) &rarr;</b></a> · <a href="/incidents/{{ inc.id }}/rca.md">Markdown</a></p>
 <p class="muted">Cluster <b>{{ inc.cluster }}</b> ({{ inc.environment }}) · namespace <b>{{ inc.namespace or "-" }}</b> · alerts {{ inc.alertnames | join(", ") }} · seen {{ inc.occurrences }}x · created {{ inc.created_at }} · email {{ inc.email_status }}</p>
 {% if inc.error %}<p class="warn">{{ inc.error }}</p>{% endif %}
 
