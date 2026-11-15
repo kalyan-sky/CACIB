@@ -10,6 +10,9 @@
 - [x] EKS on Fargate with Terraform (`compute = "fargate"`): Fargate profiles, CoreDNS on Fargate, NAT gateway. Destroyed afterwards.
 - [x] Full bank on EC2 nodes through the jump host: Argo CD (bank-sim + monitoring apps), Prometheus/Grafana with the bank dashboard.
 - [x] Read-only SRE agent live (`make sre-agent-up`): 25/25 RBAC can-i checks passed, Alertmanager routes to it, the c07 OOMKilled test incident was investigated and the email arrived in Gmail.
+- [x] RCA workflow and alert coverage added (draft -> RCA for review email -> engineer sign-off -> final RCA).
+- [x] Certificate monitoring live (x509 exporter + blackbox probes): cert-lab wrong-hostname incident detected, emailed with a guide,
+      fixed by hand (new CSR with the right names, lab CA, Secret replaced, restart), verified with openssl (return code 0), RCA email received.
 
 ## Classic cases (`./k8s-classics.sh`)
 
