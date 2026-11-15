@@ -30,7 +30,7 @@ Alertmanager ── group, dedupe, inhibit ──► POST /api/v1/alerts?cluster
 | Area | Before | Now |
 |---|---|---|
 | Prometheus, Alertmanager, Grafana | Installed by Argo CD (`make monitoring`); Alertmanager had no receiver | Alertmanager routes to the agent (grouping, dedup, inhibition); 17 incident rules + coverage rules (Argo CD, VPC CNI IPs, Grafana); `make alert-coverage` |
-| Python service | none (only `tools/platform.py`) | `apps/sre-agent/` FastAPI app, 62 tests |
+| Python service | none (only `tools/platform.py`) | `apps/sre-agent/` FastAPI app, 79 tests |
 | RBAC for automation | team RoleBindings only | `sre-agent-readonly`: get/list/watch, no Secrets/ConfigMaps/exec/writes |
 | Email, AI, approvals, incident UI | none | added; LLM off by default (your choice: rule engine) |
 | Image builds | crane for the Go app | `ci/build-sre-agent.sh`: crane, no Docker; pushes to ECR from the jump host |
@@ -94,6 +94,33 @@ Not used today: no external knowledge base, no web search, no memory of past inc
 an LLM ends as **inconclusive** with next steps; that is deliberate, rather than a confident wrong answer.
 Signed-off RCAs are stored, so "similar past incidents" (same type and workload: what the cause and fix were)
 is a natural next step.
+
+## Ready-to-run commands and the fix script
+
+Every command in a report runs as written: no `<placeholders>`. The agent fills in what the evidence shows,
+and asks at run time for what only a person can know:
+
+| Incident | Filled in from evidence | Asked when you run it |
+|---|---|---|
+| OOMKilled | limit = max(2 x current, 1.5 x measured usage), request from usage | – |
+| ImagePullBackOff | the previous revision's working image (`set image ... =<that image>`) | the correct tag, only on a first deploy |
+| Pending: insufficient CPU/memory | a request that fits (a quarter of the largest node), offered as the default | your measured value (Enter accepts the default) |
+| Pending: taint | the exact toleration (key, value, effect) from the node | – |
+| CreateContainerConfigError | Secret/key names, base64-safe patch | the secret value (hidden input, unset afterwards) |
+| PVC Pending | a new claim with the default StorageClass, same size and access modes; deletes only if still Pending | – |
+| Certificates | the hostnames clients use, CSR, Secret backup/replace, verify with hostname check | – (the CA step is a `#` instruction) |
+
+Lines starting with `#` are instructions for a person. Every report also has a **fix script**: in the email
+(as `fix-INC-n.sh.txt`, save it as `fix.sh`) and in the dashboard (**Download fix script**). Sample:
+[`examples/fix-script-example.sh`](examples/fix-script-example.sh).
+
+```bash
+bash fix.sh            # read-only checks -> asks before each change -> verification
+bash fix.sh --check    # read-only checks only
+bash fix.sh --rollback # the rollback steps
+```
+It refuses to run unless the kubectl context is the incident's cluster, shows every command before running it,
+stops at the first failure, and asks before each change. The agent never runs it; downloads are audited.
 
 ## Root cause analysis (RCA) and the human in the loop
 
@@ -206,7 +233,7 @@ Point each cluster's Alertmanager at `...?cluster=<its name>`. Incidents, histor
 
 ## Tests
 
-`make sre-agent-test` (also in the GitLab pipeline as `sre-agent-test`): 62 tests, no cluster needed.
+`make sre-agent-test` (also in the GitLab pipeline as `sre-agent-test`): 79 tests, no cluster needed.
 - Scenarios against a fake cluster: CrashLoopBackOff, OOMKilled, ImagePullBackOff, Pending (CPU, taint),
   Node NotReady, insufficient evidence, missing objects, CreateContainerConfigError, PVC, CoreDNS, RBAC 403s.
 - Security: allowlist, static scan for write/exec/Secret calls, RBAC manifest, redaction, approval makes zero API calls.

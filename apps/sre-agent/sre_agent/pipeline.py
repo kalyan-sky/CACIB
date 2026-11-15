@@ -21,6 +21,7 @@ from .diagnostics import DiagnosticEngine
 from .k8s.readonly import KubeReader
 from .models import AmAlert, IncidentReport, InvestigationEvidence, NormalizedAlert
 from .notify.email import EmailError, EmailNotifier
+from .fixscript import build_script
 from .rca import Rca, build_rca, to_markdown
 from .store import Store
 
@@ -201,7 +202,7 @@ class Pipeline:
         try:
             status = self.notifier.notify(report, environment=inc.get("environment") or "dev",
                                           correlation_key=inc["correlation_key"], approval_status=approval_status,
-                                          force=force)
+                                          force=force, script=build_script(report, approval_status))
             self.store.set_email_status(incident_id, status)
         except EmailError as e:
             log.warning("email failed", extra={"incident": incident_id, "error": str(e)})
@@ -210,6 +211,14 @@ class Pipeline:
         if status in ("sent", "failed"):
             self.store.audit("sre-agent", f"email.{status}", incident_id)
         return status
+
+    def fix_script(self, incident_id: str) -> str | None:
+        inc = self.store.get(incident_id)
+        if not inc or not inc.get("report"):
+            return None
+        approvals = self.store.approvals(incident_id=incident_id)
+        status = approvals[0]["status"] if approvals else "not required"
+        return build_script(IncidentReport.model_validate(inc["report"]), status)
 
     def rca(self, incident_id: str) -> tuple[Rca, str] | None:
         inc = self.store.get(incident_id)

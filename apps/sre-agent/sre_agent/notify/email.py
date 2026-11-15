@@ -34,9 +34,11 @@ def dedup_key(report: IncidentReport, correlation_key: str) -> str:
     return hashlib.sha256(basis.encode()).hexdigest()[:32]
 
 
-def render_html(report: IncidentReport, environment: str, approval_status: str, link: str | None) -> str:
+def render_html(report: IncidentReport, environment: str, approval_status: str, link: str | None,
+                script: str | None = None) -> str:
     return _env.get_template("incident_email.html").render(
-        r=report, environment=environment, approval_status=approval_status, link=link, labels=KIND_LABELS)
+        r=report, environment=environment, approval_status=approval_status, link=link, labels=KIND_LABELS,
+        script=script if report.commands_for_human_execution else None)
 
 
 def render_text(report: IncidentReport, approval_status: str, link: str | None) -> str:
@@ -64,7 +66,7 @@ class EmailNotifier:
         self.store = store
 
     def notify(self, report: IncidentReport, *, environment: str, correlation_key: str,
-               approval_status: str, force: bool = False) -> str:
+               approval_status: str, force: bool = False, script: str | None = None) -> str:
         """Send the report. Returns the email status stored on the incident."""
         s = self.settings
         if severity_rank(report.severity) > severity_rank(s.email_min_severity):
@@ -85,7 +87,11 @@ class EmailNotifier:
         msg["To"] = ", ".join(to)
         msg["X-SRE-Incident"] = report.incident_id
         msg.set_content(render_text(report, approval_status, link))
-        msg.add_alternative(render_html(report, environment, approval_status, link), subtype="html")
+        msg.add_alternative(render_html(report, environment, approval_status, link, script), subtype="html")
+        if script and report.commands_for_human_execution:
+            # .txt: mail filters often strip scripts; save it as fix.sh and run it with bash
+            msg.add_attachment(script.encode(), maintype="text", subtype="plain",
+                               filename=f"fix-{report.incident_id}.sh.txt")
         self._send(msg)
         self.store.record_email(key, report.incident_id)
         return "sent"

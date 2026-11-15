@@ -22,6 +22,15 @@
 <h2 style="font-size:16px;margin:16px 0 4px">Probable root cause ({{ r.root_cause_status }}, confidence {{ (r.root_cause_confidence * 100) | round | int }}%)</h2>
 <p style="margin:0">{{ r.root_cause }}</p>
 
+{% if r.commands_for_human_execution %}
+<h2 style="font-size:16px;margin:16px 0 4px">Ready to run (after approval)</h2>
+<p style="margin:0 0 4px;font-size:13px;color:#475467">Values come from the evidence; anything only a person can know is asked for when you run it.
+Copy and paste in order, or save the attached <b>fix-{{ r.incident_id }}.sh.txt</b> as <code>fix.sh</code> and run <code>bash fix.sh</code>
+(it checks the cluster, asks before each change, verifies, and has <code>--rollback</code>).</p>
+<pre style="background:#0d1117;color:#e6edf3;border-radius:6px;padding:10px;white-space:pre-wrap;font-size:13px">{% for c in r.commands_for_human_execution %}{{ c.command }}
+{% endfor %}{% for c in r.verification_steps %}{{ c.command }}
+{% endfor %}</pre>
+{% endif %}
 <h2 style="font-size:16px;margin:16px 0 4px">Supporting evidence (observed)</h2>
 <ul style="margin:0;padding-left:20px">
 {% for e in r.supporting_evidence %}<li><code style="color:#475467">{{ e.source }}</code> {{ e.observation }}</li>{% else %}<li>None collected.</li>{% endfor %}

@@ -9,6 +9,7 @@ factors as a hypothesis. If no checker matches, the result is inconclusive.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -87,6 +88,52 @@ LOG_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"panic:|Traceback \(most recent call last\)|Unhandled exception|FATAL|fatal error", re.I),
      "the application crashes with an unhandled error", "app"),
 ]
+
+# ---------------------------------------------------------------------- quantities (for ready-to-run values)
+
+_MEM = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "K": 10**3, "M": 10**6, "G": 10**9, "k": 10**3}
+
+
+def mem_bytes(q: str | None) -> int | None:
+    m = re.fullmatch(r"([0-9.]+)([KMGT]i?|k)?", str(q or "").strip())
+    return int(float(m.group(1)) * _MEM.get(m.group(2) or "", 1)) if m else None
+
+
+def fmt_mem(b: float, step_mi: int = 32) -> str:
+    """Round up to a multiple of step_mi Mi (or whole Gi above 2 Gi)."""
+    mi = b / 2**20
+    if mi > 2048:
+        return f"{int(-(-mi // 1024))}Gi"
+    return f"{int(-(-mi // step_mi) * step_mi)}Mi"
+
+
+def cpu_milli(q: str | None) -> int | None:
+    q = str(q or "").strip()
+    if q.endswith("n"):
+        return max(1, int(q[:-1]) // 1_000_000)
+    if q.endswith("m"):
+        return int(q[:-1])
+    try:
+        return int(float(q) * 1000)
+    except ValueError:
+        return None
+
+
+def fmt_cpu(m: float) -> str:
+    m = max(10, int(-(-m // 10) * 10))
+    return f"{m // 1000}" if m % 1000 == 0 else f"{m}m"
+
+
+def ask(var: str, prompt: str, secret: bool = False) -> str:
+    """A value only a human can know: prompted at run time (never echoed for secrets), never a <placeholder>."""
+    flag = "-rsp" if secret else "-rp"
+    return f'read {flag} "{prompt}: " {var}' + (" && echo" if secret else "") + f' && test -n "${var}"'
+
+
+def ask_default(var: str, prompt: str, default: str) -> str:
+    """Prompt with a computed default: Enter accepts it."""
+    return f'read -rp "{prompt} [{default}]: " {var}; {var}="${{{var}:-{default}}}"'
+
 
 GITOPS_NOTE = ("This workload is deployed by Argo CD (GitOps). Make the change in Git and let Argo CD sync it; "
                "a kubectl change is drift and is overwritten or flagged at the next sync.")
@@ -340,9 +387,13 @@ def check_config_error(c: Ctx) -> Finding | None:
                 D(f"kubectl -n {c.ns} describe {fix_obj}",
                   f"Lists the key names in the {kind} (values are not shown).",
                   f"Look for a key that is close to '{key}' (a typo) or missing."),
-                R(f"kubectl -n {c.ns} patch {fix_obj} --type merge -p "
-                  f"'{{\"stringData\":{{\"{key}\":\"<value>\"}}}}'" if kind == "Secret" else
-                  f"kubectl -n {c.ns} patch {fix_obj} --type merge -p '{{\"data\":{{\"{key}\":\"<value>\"}}}}'",
+                R((ask("VALUE", f"Value for key {key} in {kind} {obj} (from the secret owner)", secret=True)
+                   + f" && kubectl -n {c.ns} patch {fix_obj} --type json -p \"[{{\\\"op\\\":\\\"add\\\","
+                   f"\\\"path\\\":\\\"/data/{key}\\\",\\\"value\\\":\\\"$(printf %s \"$VALUE\" | base64 | tr -d '\\n')\\\"}}]\""
+                   "; unset VALUE") if kind == "Secret" else
+                  (ask("VALUE", f"Value for key {key} in ConfigMap {obj}")
+                   + f" && kubectl -n {c.ns} create configmap {obj} --from-literal={key}=\"$VALUE\" --dry-run=client "
+                   f"-o yaml | kubectl patch configmap {obj} -n {c.ns} --type merge --patch-file /dev/stdin; unset VALUE"),
                   f"Adds the missing key. Prefer fixing the {kind} over renaming the reference: other consumers "
                   f"may depend on the key name '{key}'. Never paste a real secret value into a ticket or chat.",
                   f"{kind.lower()}/{obj} patched"),
@@ -355,8 +406,10 @@ def check_config_error(c: Ctx) -> Finding | None:
             cause = f"The pod references {kind} '{obj}', which does not exist in namespace {c.ns}."
             remediation = [
                 D(f"kubectl -n {c.ns} get {kind.lower()}s", f"Lists the {kind}s that exist; check for a typo."),
-                R(f"kubectl -n {c.ns} create {kind.lower()} generic {obj} --from-literal=<key>=<value>"
-                  if kind.lower() == "secret" else f"kubectl -n {c.ns} create configmap {obj} --from-literal=<key>=<value>",
+                R((ask("KEY", f"Key name the pod expects in {kind} {obj}") + " && "
+                   + ask("VALUE", "Its value (from the owner)", secret=kind.lower() == "secret")
+                   + f" && kubectl -n {c.ns} create {'secret generic' if kind.lower() == 'secret' else 'configmap'} {obj} "
+                   '--from-literal="$KEY=$VALUE"; unset KEY VALUE'),
                   f"Creates the missing {kind} (or correct the reference in the Deployment if the name is wrong).")]
         else:
             cause = f"The kubelet cannot build the container's configuration: {msg or 'see the events'}."
@@ -408,18 +461,28 @@ def check_image_pull(c: Ctx) -> Finding | None:
         cause = f"The kubelet cannot pull '{image}'; the event message does not say why."
         conf, status = 0.5, "probable"
     repo, _, tag = image.rpartition(":") if ":" in image.split("/")[-1] else (image, "", "latest")
+    # Previous revision that used a different image: a known-good value, not a guess.
+    previous = next((img for r in sorted(c.ev.replicasets, key=lambda r: int(r.get("revision") or 0), reverse=True)
+                     for img in r.get("images", []) if img and img != image), None)
+    if previous:
+        fix = R(f"kubectl -n {c.ns} set image deployment/{c.dep_name} {ct['name']}={previous}",
+                f"Returns to the image of the previous revision ({previous}), which was running before this "
+                "change. " + (GITOPS_NOTE if c.gitops else ""), f"deployment.apps/{c.dep_name} image updated")
+    else:
+        fix = R(ask("NEW_IMAGE", f"Correct image for {ct['name']} (currently {image}; must exist in the registry)")
+                + f' && kubectl -n {c.ns} set image deployment/{c.dep_name} {ct["name"]}="$NEW_IMAGE"',
+                "No earlier working image is known (first deployment), so it asks for the tag that exists. "
+                + (GITOPS_NOTE if c.gitops else ""), f"deployment.apps/{c.dep_name} image updated")
     return Finding(
         "ImagePullBackOff", f"{c.pod_name} cannot start: the image '{image}' cannot be pulled.", cause, status, conf,
         evidence,
         factors=["A typo in the image tag in the last change (hypothesis)",
                  "The tag was never pushed because the build failed (hypothesis)"],
         investigations=[c.describe_pod(),
-                        D(f"crane ls {repo}  # or: aws ecr describe-images --repository-name <repo>",
+                        D(f"crane ls {repo}  # ECR: aws ecr describe-images --repository-name {repo.split('/', 1)[-1]}",
                           "Lists the tags that exist in the registry (run from a machine with registry access).",
                           f"Check whether '{tag}' is in the list.")],
-        remediation=[R(f"kubectl -n {c.ns} set image deployment/{c.dep_name} {ct['name']}={repo}:<correct-tag>",
-                       "Points the Deployment at an image tag that exists. " + (GITOPS_NOTE if c.gitops else ""),
-                       f"deployment.apps/{c.dep_name} image updated")],
+        remediation=[fix],
         verification=c.verify_rollout(),
         rollback=[c.undo()],
         prerequisites=["The correct image tag (from the release notes or the CI pipeline)"],
@@ -434,6 +497,7 @@ def check_oom(c: Ctx) -> Finding | None:
             if last.get("reason") != "OOMKilled" and ct["state"] != "terminated:OOMKilled":
                 continue
             limit = ((ct.get("resources") or {}).get("limits") or {}).get("memory", "not set")
+            lim_b, req_b = mem_bytes(limit), mem_bytes(((ct.get("resources") or {}).get("requests") or {}).get("memory"))
             request = ((ct.get("resources") or {}).get("requests") or {}).get("memory", "not set")
             usage = ((c.ev.metrics.get("pods") or {}).get(p["name"]) or {}).get(ct["name"], {}).get("memory")
             evidence = [Evidence(source="pod.status",
@@ -461,11 +525,7 @@ def check_oom(c: Ctx) -> Finding | None:
                                   "Memory usage now; compare with the limit."),
                                 D(f"kubectl -n {c.ns} rollout history deployment/{c.dep_name}",
                                   "Did a recent release change memory behaviour?")],
-                remediation=[R(f"kubectl -n {c.ns} set resources deployment/{c.dep_name} -c {ct['name']} "
-                               f"--requests=memory=<measured need> --limits=memory=<need + 25-50% headroom>",
-                               "Sizes memory from measured usage. If usage grows without bound, raise the limit "
-                               "only as a stop-gap and fix the leak (or roll back the release). "
-                               + (GITOPS_NOTE if c.gitops else ""))],
+                remediation=[oom_fix(c, ct, lim_b, req_b, mem_bytes(usage))],
                 verification=c.verify_rollout() + [V(f"kubectl -n {c.ns} get pod -l {c.selector()} "
                                                      "-o custom-columns=POD:.metadata.name,RESTARTS:.status.containerStatuses[0].restartCount",
                                                      "Restart counts stay the same for 15+ minutes.")],
@@ -475,6 +535,18 @@ def check_oom(c: Ctx) -> Finding | None:
                 expected_outcome="No more OOMKilled restarts; memory stays below the new limit.",
                 risk="Medium: a higher limit uses more node memory and quota; a leak will still exhaust it later.")
     return None
+
+
+def oom_fix(c: Ctx, ct: dict[str, Any], lim_b: int | None, req_b: int | None, use_b: int | None) -> Command:
+    """Memory from evidence: limit = max(2x the old limit, 1.5x usage); request = max(1.2x usage, old request)."""
+    base = lim_b or use_b or 128 * 2**20
+    new_lim = max(base * 2, (use_b or 0) * 1.5)
+    new_req = min(max((use_b or 0) * 1.2, req_b or 0, base * 0.75), new_lim)
+    why = (f"Limit {fmt_mem(new_lim)} = max(2 x the current limit, 1.5 x measured usage); request {fmt_mem(new_req)} "
+           "keeps the scheduler honest. A stop-gap if usage keeps growing (leak): then fix or roll back.")
+    return R(f"kubectl -n {c.ns} set resources deployment/{c.dep_name} -c {ct['name']} "
+             f"--requests=memory={fmt_mem(new_req)} --limits=memory={fmt_mem(new_lim)}",
+             why + (" " + GITOPS_NOTE if c.gitops else ""), f"deployment.apps/{c.dep_name} resource requirements updated")
 
 
 def check_liveness(c: Ctx) -> Finding | None:
@@ -561,12 +633,12 @@ def check_crashloop(c: Ctx) -> Finding | None:
                                              "files read at start-up need a restart."))
                     factors.append("A recent configuration change (check Git history / Argo CD diff) (hypothesis)")
                 elif category == "dependency":
-                    remediation.append(R("Restore the dependency first (see its own incident), then let the pod retry",
+                    remediation.append(R("# Restore the dependency first (see its own incident), then let the pod retry",
                                          "Restarting this pod does not help while the dependency is down."))
                     factors.append("The dependency is down, or a NetworkPolicy blocks the connection (hypothesis)")
                 elif category == "memory":
-                    remediation.append(R(f"kubectl -n {c.ns} set resources deployment/{c.dep_name} -c {ct['name']} "
-                                         "--limits=memory=<higher>", "See OOM guidance: size from measured usage."))
+                    lim = mem_bytes(((ct.get("resources") or {}).get("limits") or {}).get("memory"))
+                    remediation.append(oom_fix(c, ct, lim, None, None))
                 remediation.append(R(f"kubectl -n {c.ns} rollout undo deployment/{c.dep_name}",
                                      "Fastest mitigation if the crashes started with the latest revision "
                                      "(restores service while the fix is prepared)."))
@@ -617,9 +689,13 @@ def check_readiness(c: Ctx) -> Finding | None:
         factors=["A recent change to the probe or to the app's health endpoint (hypothesis)"],
         investigations=[c.describe_pod(),
                         D(f"kubectl -n {c.ns} get endpoints", "Which Services have no ready endpoints.")],
-        remediation=[R(f"kubectl -n {c.ns} edit deployment {c.dep_name}",
-                       "Set readinessProbe.httpGet.path/port to the endpoint the app really serves "
-                       "(check its documentation or `kubectl port-forward` and curl it). "
+        remediation=[R(ask("PROBE_PATH", f"Health path {not_ready[0]['name']} really serves (e.g. /healthz)")
+                       + f" && kubectl -n {c.ns} patch deployment {c.dep_name} -p "
+                       f"\"{{\\\"spec\\\":{{\\\"template\\\":{{\\\"spec\\\":{{\\\"containers\\\":[{{\\\"name\\\":"
+                       f"\\\"{not_ready[0]['name']}\\\",\\\"readinessProbe\\\":{{\\\"httpGet\\\":"
+                       f"{{\\\"path\\\":\\\"$PROBE_PATH\\\"}}}}}}]}}}}}}}}\"",
+                       "Points the readiness probe at the path the app answers (check: kubectl port-forward and curl "
+                       "it). Strategic merge by container name, so other settings stay. "
                        + (GITOPS_NOTE if c.gitops else ""))],
         verification=c.verify_rollout() + [V(f"kubectl -n {c.ns} get endpoints", "Ready addresses appear again.")],
         rollback=[c.undo()],
@@ -650,20 +726,32 @@ def check_pvc(c: Ctx) -> Finding | None:
     else:
         cause = "The volume provisioner has not created a volume; see the PVC events."
         status, conf = "probable", 0.5
-    default = next((s.split(" ")[0] for s in c.ev.storage_classes if "(default)" in s), "<storage-class>")
+    default = next((s.split(" ")[0] for s in c.ev.storage_classes if "(default)" in s),
+                   (c.ev.storage_classes[0].split(" ")[0] if c.ev.storage_classes else None))
+    modes = ", ".join(pvc.get("access_modes") or ["ReadWriteOnce"])
+    manifest = (f"kubectl -n {c.ns} apply -f - <<'EOF'\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n"
+                f"  name: {pvc['name']}\nspec:\n  storageClassName: {default}\n  accessModes: [{modes}]\n"
+                f"  resources:\n    requests:\n      storage: {pvc.get('requested') or '1Gi'}\nEOF")
     return Finding(
         "PersistentVolumeClaimPending", f"PVC {pvc['name']} is Pending, so pods that mount it cannot start.", cause,
         status, conf, evidence,
         factors=["The manifest was written for another cluster with different StorageClass names (hypothesis)"],
         investigations=[D(f"kubectl -n {c.ns} describe pvc {pvc['name']}", "The provisioning events."),
                         D("kubectl get storageclass", "Which classes exist and which is the default.")],
-        remediation=[R(f"kubectl -n {c.ns} get pvc {pvc['name']} -o yaml > pvc.yaml  # set storageClassName: {default}",
-                       "storageClassName is immutable: export the claim and change the class in the file."),
-                     R(f"kubectl -n {c.ns} delete pvc {pvc['name']} && kubectl -n {c.ns} apply -f pvc.yaml",
-                       "Recreates the claim with an existing class. Safe only while it is Pending (it holds no data).")],
+        remediation=([R(f"kubectl -n {c.ns} get pvc {pvc['name']} -o yaml > {pvc['name']}-pvc.backup.yaml",
+                        "Keeps the original definition (for rollback and the record)."),
+                      R(f"test \"$(kubectl -n {c.ns} get pvc {pvc['name']} -o jsonpath='{{.status.phase}}')\" = Pending && "
+                        f"kubectl -n {c.ns} delete pvc {pvc['name']} --wait=true",
+                        "storageClassName is immutable, so the claim is recreated. The test refuses to delete it "
+                        "unless it is still Pending (a Pending claim holds no data)."),
+                      R(manifest, f"Recreates the claim with the existing StorageClass {default} "
+                                  f"(same name, size {pvc.get('requested') or '1Gi'} and access modes), so the "
+                                  "waiting pod mounts it.")] if default else
+                     [R("# No StorageClass exists in this cluster: install a CSI driver / StorageClass first",
+                        "Nothing can provision volumes until then.")]),
         verification=[V(f"kubectl -n {c.ns} get pvc {pvc['name']}", "STATUS Bound."),
                       V(f"kubectl -n {c.ns} get pods -o wide", "The pod that mounts it starts.")],
-        rollback=[B(f"kubectl -n {c.ns} apply -f pvc.yaml  # the original export",
+        rollback=[B(f"kubectl -n {c.ns} delete pvc {pvc['name']} && kubectl -n {c.ns} create -f {pvc['name']}-pvc.backup.yaml",
                     "Only relevant before data was written; a Bound volume's data stays with its PV.")],
         prerequisites=["Confirm the claim is Pending (never delete a Bound PVC: it may delete data)"],
         expected_outcome="The PVC becomes Bound and the pod starts.",
@@ -695,22 +783,38 @@ def check_pending(c: Ctx) -> Finding | None:
                  "(requests count, not actual usage).")
         factors = ["The request was copied from a VM sizing sheet instead of measured usage (hypothesis)",
                    "Other pods' requests fill the nodes; adding a node or right-sizing them would help (hypothesis)"]
-        remediation = [R(f"kubectl -n {c.ns} set resources deployment/{c.dep_name} -c {ct.get('name')} "
-                         f"--requests={res}=<measured usage + headroom>",
-                         "Right-size the request from measured usage (Grafana / kubectl top). "
+        # A value that is guaranteed to fit: a quarter of the largest node's allocatable.
+        allocs = [(cpu_milli if res == "cpu" else mem_bytes)(n["allocatable"].get(res)) for n in c.ev.nodes
+                  if n.get("allocatable")]
+        biggest = max([a for a in allocs if a] or [0])
+        fits = (fmt_cpu(biggest / 4) if res == "cpu" else fmt_mem(biggest / 4)) if biggest else \
+            ("250m" if res == "cpu" else "256Mi")
+        remediation = [R(ask_default("REQ", f"{res} request for {ct.get('name')} (measured usage + headroom)", fits)
+                         + f' && kubectl -n {c.ns} set resources deployment/{c.dep_name} -c {ct.get("name")} '
+                           f'--requests={res}="$REQ"',
+                         f"Default {fits} fits on a node (a quarter of the largest node's allocatable {res}); "
+                         "type the measured usage plus headroom if you know it (Grafana / kubectl top). "
                          + (GITOPS_NOTE if c.gitops else "")),
-                       R("Scale the node group (EKS console > Compute > node group > Edit) or use Karpenter",
-                         "Only if the workload genuinely needs the capacity.")]
+                       R("# Only if the workload really needs that much: scale the node group (EKS console > Compute "
+                         "> node group > Edit) or use Karpenter", "Adds capacity; costs money.")]
         status, conf = "confirmed", 0.9
     elif "exceed the max Fargate configuration" in msg:
         cause = (f"The pod's requests ({req}) are larger than the largest Fargate size (16 vCPU / 120 GB), "
                  "so Fargate can never place it.")
-        remediation = [R(f"kubectl -n {c.ns} set resources deployment/{c.dep_name} -c {ct.get('name')} "
-                         "--requests=cpu=<measured>,memory=<measured>", "Right-size the requests.")]
+        remediation = [R(ask_default("CPU", "CPU request (measured usage + headroom)", "250m") + "; "
+                         + ask_default("MEM", "Memory request", "512Mi")
+                         + f' && kubectl -n {c.ns} set resources deployment/{c.dep_name} -c {ct.get("name")} '
+                           '--requests=cpu="$CPU",memory="$MEM"',
+                         "Fargate's largest pod is 16 vCPU / 120 GB; the defaults are its smallest size.")]
         status, conf = "confirmed", 0.9
     elif any(k in msg for k in ("didn't match Pod's node affinity/selector", "untolerated taint", "had taint")):
         sel_hit = "didn't match Pod's node affinity/selector" in msg
         taint_hit = "untolerated taint" in msg or "had taint" in msg
+        selector = p.get("node_selector") or {}
+        dedicated = [n for n in c.ev.nodes if n.get("taints") and selector
+                     and all((n.get("labels") or {}).get(k) == v for k, v in selector.items())]
+        if taint_hit and dedicated:
+            sel_hit = False  # the selector does find its node; only the taint keeps the pod off it
         causes, remediation = [], []
         if sel_hit:
             evidence.append(Evidence(source="pod.spec", observation=f"nodeSelector {p.get('node_selector') or '{}'}, "
@@ -720,19 +824,30 @@ def check_pending(c: Ctx) -> Finding | None:
                 evidence.append(Evidence(source="nodes", observation=f"node labels (sample): {labels}"))
             causes.append(f"its nodeSelector/affinity ({p.get('node_selector') or 'affinity rules'}) matches no "
                           "untainted node")
-            remediation.append(R(f"kubectl -n {c.ns} edit deployment {c.dep_name}",
-                                 "Correct the nodeSelector to a label the target nodes really have, or label the "
-                                 "intended nodes via the node group configuration (labels added by hand are lost on "
-                                 "new nodes). " + (GITOPS_NOTE if c.gitops else "")))
+            remediation.append(R(ask("SELECTOR_KEY", "Node label key the target nodes really have") + " && "
+                                 + ask("SELECTOR_VALUE", "Its value")
+                                 + f" && kubectl -n {c.ns} patch deployment {c.dep_name} --type json -p "
+                                 "\"[{\\\"op\\\":\\\"replace\\\",\\\"path\\\":\\\"/spec/template/spec/nodeSelector\\\","
+                                 "\\\"value\\\":{\\\"$SELECTOR_KEY\\\":\\\"$SELECTOR_VALUE\\\"}}]\"",
+                                 "Points the nodeSelector at a label the intended nodes have (kubectl get nodes "
+                                 "--show-labels). Label nodes through the node group, not by hand. "
+                                 + (GITOPS_NOTE if c.gitops else "")))
         if taint_hit:
             taints = {n["name"]: n.get("taints") for n in c.ev.nodes if n.get("taints")}
             evidence.append(Evidence(source="nodes", observation=f"node taints: {taints or 'see the event'}"))
             evidence.append(Evidence(source="pod.spec", observation=f"pod tolerations: {p.get('tolerations') or 'none'}"))
             causes.append("the nodes it is meant for carry a taint it does not tolerate")
-            remediation.append(R(f"kubectl -n {c.ns} edit deployment {c.dep_name}",
-                                 "Add a toleration matching the taint (key, value, effect) if this workload belongs "
-                                 "on those nodes. Do not remove the taint: it keeps other workloads off dedicated "
-                                 "nodes. " + (GITOPS_NOTE if c.gitops else "")))
+            target = (dedicated or [n for n in c.ev.nodes if n.get("taints")] or [{}])[0]
+            taint = next((t for t in target.get("taints") or [] if t.get("effect") in ("NoSchedule", "NoExecute")), None)
+            if taint:
+                tol = [*(p.get("tolerations") or []),
+                       {"key": taint["key"], "operator": "Equal", "value": taint.get("value", ""),
+                        "effect": taint["effect"]}]
+                patch = json.dumps({"spec": {"template": {"spec": {"tolerations": tol}}}}, separators=(",", ":"))
+                remediation.append(R(f"kubectl -n {c.ns} patch deployment {c.dep_name} -p '{patch}'",
+                                     f"Tolerates {taint['key']}={taint.get('value', '')}:{taint['effect']} on "
+                                     f"{target.get('name')}, keeping existing tolerations. Do not remove the taint: "
+                                     "it keeps other workloads off dedicated nodes. " + (GITOPS_NOTE if c.gitops else "")))
         cause = "The scheduler finds no node for the pod: " + "; and ".join(causes) + "."
         status, conf = "confirmed", 0.9 if len(causes) == 1 else 0.85
     elif "unbound immediate PersistentVolumeClaims" in msg or "persistentvolumeclaim" in msg.lower():
@@ -741,7 +856,7 @@ def check_pending(c: Ctx) -> Finding | None:
         status, conf = "probable", 0.7
     elif "Too many pods" in msg:
         cause = "Every node has reached its maximum pod count (max-pods / IP addresses for VPC CNI)."
-        remediation = [R("Add nodes, or enable prefix delegation in the VPC CNI to raise max pods per node",
+        remediation = [R("# Add nodes, or enable prefix delegation in the VPC CNI to raise max pods per node",
                          "More pod slots.")]
         status, conf = "confirmed", 0.85
     else:
@@ -773,9 +888,10 @@ def check_quota(c: Ctx) -> Finding | None:
                         D(f"kubectl -n {c.ns} get pods -o custom-columns=NAME:.metadata.name,"
                           "CPU:.spec.containers[*].resources.requests.cpu,MEM:.spec.containers[*].resources.requests.memory",
                           "Which pods use the quota.")],
-        remediation=[R(f"kubectl -n {c.ns} set resources deployment/{c.dep_name} --requests=cpu=<right-sized>",
+        remediation=[R(ask_default("CPU", f"CPU request per pod for {c.dep_name} (right-sized)", "100m")
+                       + f' && kubectl -n {c.ns} set resources deployment/{c.dep_name} --requests=cpu="$CPU"',
                        "Right-size the new workload first (FinOps)."),
-                     R("Raise the namespace quota through the platform's change process",
+                     R("# Or raise the namespace quota through the platform's change process (budget owner approval)",
                        "Only with the budget owner's approval.")],
         verification=c.verify_rollout(), rollback=[c.undo()],
         expected_outcome="The ReplicaSet creates the missing pods.",
@@ -804,7 +920,10 @@ def check_node(c: Ctx) -> Finding | None:
         evidence.append(Evidence(source="metrics", observation=f"usage {usage}, allocatable {node.get('allocatable')}"))
     aws = [D(f"aws ec2 describe-instance-status --instance-ids {instance} --include-all-instances",
              "Is the EC2 instance running, and do the system/instance status checks pass? (read-only AWS call)"),
-           D("aws autoscaling describe-scaling-activities --max-items 5 --auto-scaling-group-name <node group ASG>",
+           D(f"aws autoscaling describe-scaling-activities --max-items 5 --auto-scaling-group-name "
+             f"\"$(aws eks describe-nodegroup --cluster-name {c.alert.cluster} --nodegroup-name "
+             f"{(node.get('labels') or {}).get('eks.amazonaws.com/nodegroup', 'workers')} "
+             "--query 'nodegroup.resources.autoScalingGroups[0].name' --output text)\"",
              "Did the Auto Scaling group stop, replace or terminate the instance?")]
     if pressures:
         t = pressures[0]
@@ -822,7 +941,7 @@ def check_node(c: Ctx) -> Finding | None:
             remediation=[R(f"kubectl cordon {node['name']}", "Stops new pods landing on the node while you investigate."),
                          R(f"kubectl drain {node['name']} --ignore-daemonsets --delete-emptydir-data",
                            "Moves workloads elsewhere; PodDisruptionBudgets are honoured. Then replace the node."),
-                         R("Fix the offending workload's limits (memory/ephemeral-storage)", "Prevents recurrence.")],
+                         R("# Then fix the offending workload's limits (memory / ephemeral-storage)", "Prevents recurrence.")],
             verification=[V(f"kubectl describe node {node['name']} | grep -A8 Conditions", f"{t} False.")],
             rollback=[B(f"kubectl uncordon {node['name']}", "Returns the node to service once healthy.")],
             expected_outcome="The pressure condition clears and evictions stop.",
@@ -875,7 +994,7 @@ def check_coredns(c: Ctx) -> Finding | None:
         factors=["A manual scale-down or a failed add-on update (check CloudTrail / audit log) (hypothesis)"],
         investigations=[D("kubectl -n kube-system get deploy coredns", "Desired vs available replicas."),
                         D("kubectl -n kube-system get events --sort-by=.lastTimestamp | tail -20", "Recent changes."),
-                        D("aws eks describe-addon --cluster-name <cluster> --addon-name coredns",
+                        D(f"aws eks describe-addon --cluster-name {c.alert.cluster} --addon-name coredns",
                           "Managed add-on status (EKS may restore it).")],
         remediation=[R("kubectl -n kube-system scale deployment coredns --replicas=2",
                        "Restores DNS. On EKS the managed add-on may do this itself.")],
@@ -923,7 +1042,8 @@ def check_throttling(c: Ctx) -> Finding | None:
         "probable", 0.6, evidence,
         factors=["The limit is too low for peak load (hypothesis)", "Bursty start-up (JIT, cache warm-up) (hypothesis)"],
         investigations=[D(f"kubectl -n {c.ns} top pod {c.pod_name} --containers", "CPU usage versus limit.")],
-        remediation=[R(f"kubectl -n {c.ns} set resources deployment/{c.dep_name} -c {ct['name']} --limits=cpu=<higher>",
+        remediation=[R(f"kubectl -n {c.ns} set resources deployment/{c.dep_name} -c {ct['name']} "
+                       f"--limits=cpu={fmt_cpu(2 * (cpu_milli(lim) or 500))}",
                        "Raise (or remove, per platform policy) the CPU limit based on measured peaks. "
                        + (GITOPS_NOTE if c.gitops else ""))],
         verification=c.verify_rollout(), rollback=[c.undo()],
@@ -972,9 +1092,9 @@ def inconclusive(c: Ctx) -> Finding:
         investigations=runbook_checks + [
             D(f"kubectl -n {c.ns} get events --sort-by=.lastTimestamp | tail -30", "Recent events in the namespace."),
             D(f"kubectl -n {c.ns} get pods -o wide", "Current pod status."),
-            D("Open the Grafana dashboards for the namespace/pod around the alert time",
+            D("# Open the Grafana dashboards for the namespace/pod around the alert time",
               "Metrics history shows what changed (traffic, latency, memory)."),
-            D("Check the Argo CD history and Git log for changes just before the alert", "Correlate with releases.")]
+            D("# Check the Argo CD history and Git log for changes just before the alert", "Correlate with releases.")]
         + ([c.describe_pod()] if c.pod else []),
         expected_outcome="Further evidence identifies the cause, or the alert clears on its own.",
         risk="None from investigating; do not apply changes until the cause is known.")

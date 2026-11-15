@@ -24,6 +24,18 @@
   {% if r.symptoms %}<h3>Symptoms</h3><ul>{% for s in r.symptoms %}<li>{{ s }}</li>{% endfor %}</ul>{% endif %}
 </section>
 
+{% if r.commands_for_human_execution %}
+<section class="card">
+  <h2>Ready to run <span class="muted small">(after approval; the agent does not run it)</span></h2>
+  <pre>{% for c in r.commands_for_human_execution %}{{ c.command }}
+{% endfor %}{% for c in r.verification_steps %}{{ c.command }}
+{% endfor %}</pre>
+  <p><a href="/incidents/{{ inc.id }}/fix.sh"><b>Download fix script</b></a> · <span class="muted">bash fix-{{ inc.id }}.sh
+  [--check | --rollback]: refuses the wrong cluster, asks before every change, verifies.</span></p>
+  <details><summary>Show the script</summary><pre>{{ script }}</pre></details>
+</section>
+{% endif %}
+
 <section class="card">
   <h2>Resolution guide</h2>
   {% if r.prerequisites %}<p><b>Prerequisites:</b> {{ r.prerequisites | join("; ") }}</p>{% endif %}

@@ -87,7 +87,8 @@ class FakeKube:
                  events: list | None = None, nodes: list | None = None, logs: dict | None = None,
                  pvcs: list | None = None, storage_classes: list | None = None, services: list | None = None,
                  endpoints: dict | None = None, quotas: list | None = None, pod_metrics: list | None = None,
-                 forbidden: set[str] | None = None, ingresses: list | None = None):
+                 forbidden: set[str] | None = None, ingresses: list | None = None,
+                 replicasets: list | None = None):
         self.cluster = cluster
         self.commands: list[str] = []
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -104,6 +105,7 @@ class FakeKube:
         self.pod_metrics = pod_metrics or []
         self.forbidden = forbidden or set()
         self.ingresses = ingresses or []
+        self.replicasets = replicasets
 
     def call(self, operation: str, **kw: Any) -> Any:
         if operation not in ALLOWED_OPERATIONS:
@@ -136,6 +138,8 @@ class FakeKube:
             return {"items": items}
         if operation == "read_deployment":
             return self._one(self.deployments, name, ns, operation)
+        if operation == "list_replicasets" and self.replicasets is not None:
+            return {"items": self.replicasets}
         if operation == "list_replicasets":
             return {"items": [{"metadata": {"name": f"{d['metadata']['name']}-7d9f8c6b5d",
                                             "annotations": {"deployment.kubernetes.io/revision": "3"}},

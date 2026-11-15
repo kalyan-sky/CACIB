@@ -213,6 +213,7 @@ def create_app(settings: Settings | None = None, *, kube_factory: Callable[[str]
         tokens = {a["id"]: csrf_token(settings.session_secret, user.name, f"approval:{a['id']}") for a in approvals}
         return templates.TemplateResponse(request, "incident.html", {
             "user": user, "inc": inc, "r": report, "approvals": approvals, "tokens": tokens,
+            "script": pipeline.fix_script(incident_id),
             "evidence": inc.get("evidence") or {}, "audit": store.audit_log(incident_id)})
 
     # ------------------------------------------------------------------ RCA (post-incident report)
@@ -231,6 +232,15 @@ def create_app(settings: Settings | None = None, *, kube_factory: Callable[[str]
     def rca_markdown(incident_id: str, user: User = Depends(current_user)) -> Response:
         return Response(_rca(incident_id)[1], media_type="text/markdown; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="RCA-{incident_id}.md"'})
+
+    @app.get("/incidents/{incident_id}/fix.sh")
+    def fix_script(incident_id: str, user: User = Depends(current_user)) -> Response:
+        script = pipeline.fix_script(incident_id)
+        if script is None:
+            raise HTTPException(404, "no report for this incident yet")
+        store.audit(user.name, "fixscript.downloaded", incident_id)
+        return Response(script, media_type="text/x-shellscript; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="fix-{incident_id}.sh"'})
 
     @app.get("/incidents/{incident_id}/rca", response_class=HTMLResponse)
     def rca_page(request: Request, incident_id: str, user: User = Depends(current_user)) -> HTMLResponse:
