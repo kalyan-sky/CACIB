@@ -30,7 +30,7 @@ Alertmanager ── group, dedupe, inhibit ──► POST /api/v1/alerts?cluster
 | Area | Before | Now |
 |---|---|---|
 | Prometheus, Alertmanager, Grafana | Installed by Argo CD (`make monitoring`); Alertmanager had no receiver | Alertmanager routes to the agent (grouping, dedup, inhibition); 17 incident rules + coverage rules (Argo CD, VPC CNI IPs, Grafana); `make alert-coverage` |
-| Python service | none (only `tools/platform.py`) | `apps/sre-agent/` FastAPI app, 79 tests |
+| Python service | none (only `tools/platform.py`) | `apps/sre-agent/` FastAPI app, 89 tests |
 | RBAC for automation | team RoleBindings only | `sre-agent-readonly`: get/list/watch, no Secrets/ConfigMaps/exec/writes |
 | Email, AI, approvals, incident UI | none | added; LLM off by default (your choice: rule engine) |
 | Image builds | crane for the Go app | `ci/build-sre-agent.sh`: crane, no Docker; pushes to ECR from the jump host |
@@ -90,10 +90,11 @@ It handles **any alert** Prometheus raises in real time, not only the lab's scen
 4. **Optional LLM** (off: you chose the rule engine). Switched on, it reasons over the same evidence for
    incidents no rule covers; its answer is validated and every evidence item must exist in what was collected.
 
-Not used today: no external knowledge base, no web search, no memory of past incidents. A novel failure without
+5. **Its own history** (below): similar past incidents, what fixed them, and whether the agent was right.
+
+Not used today: no external knowledge base, no web search. A novel failure without
 an LLM ends as **inconclusive** with next steps; that is deliberate, rather than a confident wrong answer.
-Signed-off RCAs are stored, so "similar past incidents" (same type and workload: what the cause and fix were)
-is a natural next step.
+
 
 ## Ready-to-run commands and the fix script
 
@@ -121,6 +122,28 @@ bash fix.sh --rollback # the rollback steps
 ```
 It refuses to run unless the kubectl context is the incident's cluster, shows every command before running it,
 stops at the first failure, and asks before each change. The agent never runs it; downloads are audited.
+
+## Learning from past incidents
+
+**Seen before.** Every new incident lists up to 3 similar past incidents: same failure type and workload first,
+then same namespace, shared alerts, similar root-cause wording, with signed-off RCAs ranked higher. For each one
+it shows the root cause, **what fixed it** (the engineer's "actions taken"), how long it took, and whether the
+agent was right. It appears in the incident email, the dashboard and the RCA ("Related incidents").
+- When an engineer marked the agent **incorrect**, the engineer's root cause is shown instead of the agent's,
+  so one correction helps every later incident.
+- **Recurring:** two or more earlier incidents of the same type on the same workload in 30 days are flagged
+  ("fixes are not sticking: open a problem record").
+
+**Accuracy feedback.** Signing off an RCA requires the engineer to mark the agent's root cause as **correct**,
+**partly correct** or **incorrect**. If it was incorrect, they record the real cause and, optionally, the real
+incident type. The **Accuracy** page (`/accuracy`, also a tile on the dashboard; JSON at `/api/v1/accuracy`) shows:
+- reviewed RCAs and accuracy overall and per incident type, where accuracy = (correct + half of partial) / reviewed
+- **confidence calibration:** the agent's average stated confidence when it was right versus wrong
+
+Prometheus gets `sre_agent_diagnosis_accuracy{incident_type}` and `sre_agent_diagnosis_feedback_total`,
+so accuracy can go on a Grafana panel or trigger an alert if it drops.
+
+Existing incident databases are upgraded automatically (new columns are added on start-up).
 
 ## Root cause analysis (RCA) and the human in the loop
 
@@ -233,7 +256,7 @@ Point each cluster's Alertmanager at `...?cluster=<its name>`. Incidents, histor
 
 ## Tests
 
-`make sre-agent-test` (also in the GitLab pipeline as `sre-agent-test`): 79 tests, no cluster needed.
+`make sre-agent-test` (also in the GitLab pipeline as `sre-agent-test`): 89 tests, no cluster needed.
 - Scenarios against a fake cluster: CrashLoopBackOff, OOMKilled, ImagePullBackOff, Pending (CPU, taint),
   Node NotReady, insufficient evidence, missing objects, CreateContainerConfigError, PVC, CoreDNS, RBAC 403s.
 - Security: allowlist, static scan for write/exec/Secret calls, RBAC manifest, redaction, approval makes zero API calls.

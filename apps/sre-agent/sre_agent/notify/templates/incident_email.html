@@ -22,6 +22,15 @@
 <h2 style="font-size:16px;margin:16px 0 4px">Probable root cause ({{ r.root_cause_status }}, confidence {{ (r.root_cause_confidence * 100) | round | int }}%)</h2>
 <p style="margin:0">{{ r.root_cause }}</p>
 
+{% if r.similar_incidents %}
+<h2 style="font-size:16px;margin:16px 0 4px">Seen before</h2>
+{% if r.recurrences_30d >= 2 %}<p style="margin:0 0 4px;color:#b42318"><b>Recurring:</b> {{ r.recurrences_30d }} earlier incidents of this type on this workload in 30 days. Fixes are not sticking.</p>{% endif %}
+<ul style="margin:0;padding-left:20px">
+{% for s in r.similar_incidents %}<li><b>{{ s.incident_id }}</b> ({{ s.date }}, {{ s.cluster }}/{{ s.workload }}): {{ s.root_cause }} <i style="color:#475467">({{ s.root_cause_source }})</i>.
+{% if s.fix %}Fixed by: {{ s.fix }}.{% endif %}{% if s.time_to_resolve_min is not none %} Resolved in {{ s.time_to_resolve_min }} min.{% endif %}
+{% if s.agent_verdict %} Agent diagnosis was <b>{{ s.agent_verdict }}</b>.{% endif %}</li>
+{% endfor %}</ul>
+{% endif %}
 {% if r.commands_for_human_execution %}
 <h2 style="font-size:16px;margin:16px 0 4px">Ready to run (after approval)</h2>
 <p style="margin:0 0 4px;font-size:13px;color:#475467">Values come from the evidence; anything only a person can know is asked for when you run it.

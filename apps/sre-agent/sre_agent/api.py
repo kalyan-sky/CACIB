@@ -63,6 +63,7 @@ def create_app(settings: Settings | None = None, *, kube_factory: Callable[[str]
         if start_workers:
             pipeline.start()
         metrics.PENDING_APPROVALS.set(store.pending_approval_count())
+        _refresh_accuracy()
         yield
         if start_workers:
             await pipeline.stop()
@@ -197,7 +198,7 @@ def create_app(settings: Settings | None = None, *, kube_factory: Callable[[str]
                           incident_type=incident_type or None, status=status_ or None,
                           since=since or None, until=until or None, limit=200)
         return templates.TemplateResponse(request, "index.html", {
-            "user": user, "stats": store.stats(), "incidents": rows,
+            "user": user, "stats": store.stats(), "incidents": rows, "accuracy": store.accuracy()["overall"],
             "clusters": sorted(settings.clusters), "pending": store.approvals(status="Pending")[:10],
             "f": {"cluster": cluster or "", "namespace": namespace or "", "severity": severity or "",
                   "incident_type": incident_type or "", "status": status_ or "", "since": since or "",
@@ -215,6 +216,21 @@ def create_app(settings: Settings | None = None, *, kube_factory: Callable[[str]
             "user": user, "inc": inc, "r": report, "approvals": approvals, "tokens": tokens,
             "script": pipeline.fix_script(incident_id),
             "evidence": inc.get("evidence") or {}, "audit": store.audit_log(incident_id)})
+
+    # ------------------------------------------------------------------ agent accuracy (engineer feedback)
+
+    def _refresh_accuracy() -> None:
+        for inc_type, t in store.accuracy()["by_type"].items():
+            if t["accuracy"] is not None:
+                metrics.DIAGNOSIS_ACCURACY.labels(inc_type).set(t["accuracy"])
+
+    @app.get("/api/v1/accuracy")
+    def api_accuracy(user: User = Depends(current_user)) -> dict[str, Any]:
+        return store.accuracy()
+
+    @app.get("/accuracy", response_class=HTMLResponse)
+    def accuracy_page(request: Request, user: User = Depends(current_user)) -> HTMLResponse:
+        return templates.TemplateResponse(request, "accuracy.html", {"user": user, "a": store.accuracy()})
 
     # ------------------------------------------------------------------ RCA (post-incident report)
 
@@ -254,6 +270,8 @@ def create_app(settings: Settings | None = None, *, kube_factory: Callable[[str]
     def rca_update(incident_id: str, csrf: str = Form(...), action: str = Form("save", pattern="^(save|sign_off)$"),
                    actions_taken: str = Form("", max_length=5000), root_cause_confirmation: str = Form("", max_length=5000),
                    lessons: str = Form("", max_length=5000), follow_ups: str = Form("", max_length=5000),
+                   agent_verdict: str = Form("", pattern="^(|correct|partial|incorrect)$"),
+                   actual_cause_type: str = Form("", max_length=100),
                    user: User = Depends(approver)) -> RedirectResponse:
         if not token_matches(csrf, csrf_token(settings.session_secret, user.name, f"rca:{incident_id}")):
             raise HTTPException(403, "invalid form token")
@@ -262,10 +280,14 @@ def create_app(settings: Settings | None = None, *, kube_factory: Callable[[str]
         try:
             store.save_rca_notes(incident_id, user.name, {
                 "actions_taken": actions_taken, "root_cause_confirmation": root_cause_confirmation,
-                "lessons": lessons, "follow_ups": follow_ups}, sign_off=action == "sign_off")
+                "lessons": lessons, "follow_ups": follow_ups, "agent_verdict": agent_verdict,
+                "actual_cause_type": actual_cause_type}, sign_off=action == "sign_off")
         except ValueError as e:
             raise HTTPException(409, str(e)) from None
         if action == "sign_off":
+            inc_type = (store.get(incident_id) or {}).get("incident_type") or "unknown"
+            metrics.DIAGNOSIS_FEEDBACK.labels(inc_type, agent_verdict).inc()
+            _refresh_accuracy()
             pipeline.send_rca(incident_id, final=True)  # records only; no cluster action
         return RedirectResponse(f"/incidents/{incident_id}/rca", status_code=303)
 

@@ -73,6 +73,9 @@ class Rca(BaseModel):
     lessons: list[str]
     open_questions: list[str]
     signed_off: str
+    agent_verdict: str = ""  # engineer's review of the agent's root cause: correct | partial | incorrect
+    actual_cause_type: str = ""
+    related: list[dict[str, Any]] = Field(default_factory=list)  # similar past incidents
     commands_executed: list[str] = Field(default_factory=list)
     analysis_engine: str = "rules"
     generated_at: str = ""
@@ -249,7 +252,7 @@ def build_rca(incident: dict[str, Any], approvals: list[dict[str, Any]], audit: 
         "approval.expired": "Approval expired without a decision",
         "incident.resolved": "Alert resolved (monitoring back to normal)",
         "rca.updated": "Engineer updated the RCA",
-        "rca.signed_off": "RCA signed off",
+        "rca.signed_off": "RCA signed off (agent diagnosis reviewed)",
         "rca.emailed": "RCA emailed",
     }
     for a in sorted(audit, key=lambda x: x["id"]):
@@ -336,6 +339,9 @@ def build_rca(incident: dict[str, Any], approvals: list[dict[str, Any]], audit: 
         lessons=lessons,
         open_questions=open_q,
         signed_off=f"{signed} at {fmt(notes.get('signed_off_at'))}" if signed else "Not signed off",
+        agent_verdict=notes.get("agent_verdict") or "",
+        actual_cause_type=notes.get("actual_cause_type") or "",
+        related=report.similar_incidents if report else [],
         commands_executed=[c.removeprefix("read-only: ") for c in (report.agent_actions_taken if report else [])],
         analysis_engine=report.analysis_engine if report else "-",
         generated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -367,6 +373,8 @@ def to_markdown(r: Rca) -> str:
         f"**{r.root_cause}**", "",
         f"Status: {r.root_cause_status}, confidence {round(r.root_cause_confidence * 100)}%. "
         f"Engineer confirmation: {r.root_cause_confirmation}", "",
+        *([f"Agent diagnosis reviewed by the engineer: **{r.agent_verdict}**"
+           + (f" (real type: {r.actual_cause_type})" if r.actual_cause_type else ""), ""] if r.agent_verdict else []),
         "### 5 whys",
         *[f"{i}. **{w.question}** {w.answer} _({BASIS[w.basis]})_" for i, w in enumerate(r.five_whys, 1)],
         "",
@@ -388,6 +396,10 @@ def to_markdown(r: Rca) -> str:
         "| # | Action | Type | Owner | Due | Status |", "|---|---|---|---|---|---|",
         *[f"| {i} | {a.action} | {a.kind} | {a.owner} | {a.due} | {a.status} |" for i, a in enumerate(r.capa, 1)],
         "",
+        *(["## Related incidents (seen before)",
+            *[f"- {s['incident_id']} ({s['date']}, {s['cluster']}/{s['workload']}): {s['root_cause']} "
+              f"_({s['root_cause_source']})_" + (f"; fixed by: {s['fix']}" if s.get("fix") else "")
+              for s in r.related], ""] if r.related else []),
         "## 8. Lessons learned", *[f"- {x}" for x in r.lessons], "",
         "## 9. Open questions", *([f"- {q}" for q in r.open_questions] or ["- none (closed at sign-off)" if r.status == "Final"
                                                                             else "- none"]), "",

@@ -6,6 +6,7 @@ later in the pipeline never loses it.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import threading
@@ -70,7 +71,9 @@ CREATE TABLE IF NOT EXISTS rca_notes (     -- the parts of the RCA only humans c
     updated_by TEXT,
     updated_at TEXT,
     signed_off_by TEXT,
-    signed_off_at TEXT
+    signed_off_at TEXT,
+    agent_verdict TEXT,                -- correct | partial | incorrect: was the agent's diagnosis right?
+    actual_cause_type TEXT             -- the real incident type when the agent was wrong
 );
 CREATE TABLE IF NOT EXISTS email_dedup (
     dedup_key TEXT PRIMARY KEY,
@@ -100,6 +103,14 @@ class Store:
         with self._lock:
             self._db.execute("PRAGMA journal_mode=WAL" if path != ":memory:" else "PRAGMA journal_mode=MEMORY")
             self._db.executescript(SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was created (the volume outlives image upgrades)."""
+        have = {r["name"] for r in self._db.execute("PRAGMA table_info(rca_notes)")}
+        for column in ("agent_verdict", "actual_cause_type"):
+            if column not in have:
+                self._db.execute(f"ALTER TABLE rca_notes ADD COLUMN {column} TEXT")
 
     def _q(self, sql: str, args: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         with self._lock:
@@ -260,7 +271,9 @@ class Store:
 
     # ------------------------------------------------------------------ RCA notes (human input)
 
-    RCA_FIELDS = ("actions_taken", "root_cause_confirmation", "lessons", "follow_ups")
+    RCA_FIELDS = ("actions_taken", "root_cause_confirmation", "lessons", "follow_ups", "agent_verdict",
+                  "actual_cause_type")
+    VERDICTS = ("correct", "partial", "incorrect")
 
     def rca_notes(self, incident_id: str) -> dict[str, Any]:
         rows = self._q("SELECT * FROM rca_notes WHERE incident_id=?", (incident_id,))
@@ -271,20 +284,74 @@ class Store:
             if self.rca_notes(incident_id).get("signed_off_by"):
                 raise ValueError("the RCA is already signed off")
             values = {k: (fields.get(k) or "")[:5000] for k in self.RCA_FIELDS}
+            if values["agent_verdict"] and values["agent_verdict"] not in self.VERDICTS:
+                raise ValueError(f"agent verdict must be one of {self.VERDICTS}")
+            if values["agent_verdict"] == "correct":
+                values["actual_cause_type"] = ""
             if sign_off and not values["actions_taken"].strip():
                 raise ValueError("describe the actions taken before signing off")
-            self._x("INSERT INTO rca_notes (incident_id, actions_taken, root_cause_confirmation, lessons, follow_ups,"
-                    " updated_by, updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(incident_id) DO UPDATE SET "
-                    "actions_taken=excluded.actions_taken, root_cause_confirmation=excluded.root_cause_confirmation,"
-                    " lessons=excluded.lessons, follow_ups=excluded.follow_ups, updated_by=excluded.updated_by,"
-                    " updated_at=excluded.updated_at",
+            if sign_off and not values["agent_verdict"]:
+                raise ValueError("say whether the agent's diagnosis was correct before signing off")
+            if sign_off and values["agent_verdict"] == "incorrect" and not values["root_cause_confirmation"].strip():
+                raise ValueError("the agent was wrong: record the real root cause before signing off")
+            cols = ", ".join(self.RCA_FIELDS)
+            self._x(f"INSERT INTO rca_notes (incident_id, {cols}, updated_by, updated_at) "
+                    f"VALUES ({', '.join('?' * (len(self.RCA_FIELDS) + 3))}) ON CONFLICT(incident_id) DO UPDATE SET "
+                    + ", ".join(f"{c}=excluded.{c}" for c in (*self.RCA_FIELDS, "updated_by", "updated_at")),
                     (incident_id, *values.values(), user, iso()))
             self.audit(user, "rca.updated", incident_id, {k: bool(v) for k, v in values.items()})
             if sign_off:
                 self._x("UPDATE rca_notes SET signed_off_by=?, signed_off_at=? WHERE incident_id=?",
                         (user, iso(), incident_id))
-                self.audit(user, "rca.signed_off", incident_id)
+                self.audit(user, "rca.signed_off", incident_id, {"agent_verdict": values["agent_verdict"]})
             return self.rca_notes(incident_id)
+
+    # ------------------------------------------------------------------ learning from past incidents
+
+    def history_candidates(self, incident_type: str, namespace: str | None, exclude: str,
+                           limit: int = 300) -> list[dict[str, Any]]:
+        """Earlier investigated incidents of the same type or in the same namespace, with their RCA notes."""
+        rows = self._q(
+            "SELECT i.*, n.actions_taken, n.root_cause_confirmation, n.agent_verdict, n.actual_cause_type, "
+            "n.signed_off_by, n.signed_off_at FROM incidents i LEFT JOIN rca_notes n ON n.incident_id = i.id "
+            "WHERE i.id != ? AND i.report_json IS NOT NULL AND (i.incident_type = ? OR i.namespace IS ?) "
+            "ORDER BY i.seq DESC LIMIT ?", (exclude, incident_type, namespace, limit))
+        out = []
+        for r in rows:
+            d = _incident(r)
+            for k in ("actions_taken", "root_cause_confirmation", "agent_verdict", "actual_cause_type",
+                      "signed_off_by", "signed_off_at"):
+                d[k] = r[k]
+            out.append(d)
+        return out
+
+    def accuracy(self) -> dict[str, Any]:
+        """How often engineers confirmed the agent's diagnosis, per incident type (signed-off RCAs only)."""
+        rows = self._q("SELECT i.incident_type, i.report_json, n.agent_verdict FROM rca_notes n "
+                       "JOIN incidents i ON i.id = n.incident_id WHERE n.signed_off_by IS NOT NULL "
+                       "AND n.agent_verdict IS NOT NULL AND n.agent_verdict != ''")
+        by_type: dict[str, dict[str, Any]] = {}
+        conf: dict[str, list[float]] = {v: [] for v in self.VERDICTS}
+        for r in rows:
+            t = by_type.setdefault(r["incident_type"] or "unknown",
+                                   {"correct": 0, "partial": 0, "incorrect": 0, "reviewed": 0})
+            t[r["agent_verdict"]] += 1
+            t["reviewed"] += 1
+            with contextlib.suppress(Exception):
+                conf[r["agent_verdict"]].append(float(json.loads(r["report_json"])["root_cause_confidence"]))
+
+        def score(t: dict[str, Any]) -> float | None:
+            return round((t["correct"] + 0.5 * t["partial"]) / t["reviewed"], 3) if t["reviewed"] else None
+
+        total = {k: sum(t[k] for t in by_type.values()) for k in ("correct", "partial", "incorrect", "reviewed")}
+        for t in by_type.values():
+            t["accuracy"] = score(t)
+        return {
+            "overall": {**total, "accuracy": score(total)},
+            "by_type": dict(sorted(by_type.items(), key=lambda kv: -kv[1]["reviewed"])),
+            # calibration: a well-calibrated agent is more confident when it is right
+            "avg_confidence": {v: (round(sum(xs) / len(xs), 3) if xs else None) for v, xs in conf.items()},
+        }
 
     def audit_done(self, incident_id: str, action: str) -> bool:
         return bool(self._q("SELECT 1 FROM audit_log WHERE incident_id=? AND action=? LIMIT 1", (incident_id, action)))

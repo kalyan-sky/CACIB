@@ -79,7 +79,8 @@ def test_engineer_completes_and_signs_off(app, store, smtp):
         # sign-off needs the actions taken
         assert c.post(f"/incidents/{iid}/rca", data={"csrf": token, "action": "sign_off"}, auth=ALICE).status_code == 409
         r = c.post(f"/incidents/{iid}/rca", auth=ALICE, follow_redirects=False, data={
-            "csrf": token, "action": "sign_off", "actions_taken": "Raised memory limit to 256Mi via MR !42",
+            "csrf": token, "action": "sign_off", "agent_verdict": "correct",
+            "actions_taken": "Raised memory limit to 256Mi via MR !42",
             "root_cause_confirmation": "Confirmed: cache is 96 MB, limit was 64Mi",
             "lessons": "Size limits from measured usage\n- Alert on 90% memory", "follow_ups": "Add memory load test"})
         assert r.status_code == 303

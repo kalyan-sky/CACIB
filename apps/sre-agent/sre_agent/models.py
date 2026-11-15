@@ -231,6 +231,8 @@ class IncidentReport(BaseModel):
     agent_actions_taken: list[str] = Field(default_factory=list)
     analysis_engine: str = "rules"
     analysis_notes: list[str] = Field(default_factory=list)
+    similar_incidents: list[dict[str, Any]] = Field(default_factory=list)  # from history.find_similar
+    recurrences_30d: int = 0
     started_at: str | None = None
     generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
 

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Agent accuracy{% endblock %}
+{% block content %}
+<p><a href="/">&larr; incidents</a></p>
+<h1>Agent accuracy</h1>
+<p class="muted">From signed-off RCAs: at sign-off the engineer marks the agent's root cause as correct, partly correct or
+incorrect. Accuracy = (correct + half of partial) / reviewed. Use it to see where the agent's rules need work, and how far
+to trust its confidence.</p>
+
+<section class="tiles">
+  <div class="tile"><b>{{ a.overall.reviewed }}</b><span>RCAs reviewed</span></div>
+  <div class="tile"><b>{{ "%d%%" % (a.overall.accuracy * 100) if a.overall.accuracy is not none else "-" }}</b><span>Overall accuracy</span></div>
+  <div class="tile"><b>{{ a.overall.correct }}</b><span>Correct</span></div>
+  <div class="tile"><b>{{ a.overall.partial }}</b><span>Partly correct</span></div>
+  <div class="tile sev-CRITICAL"><b>{{ a.overall.incorrect }}</b><span>Incorrect</span></div>
+</section>
+
+<section class="card">
+  <h2>By incident type</h2>
+  <table>
+    <tr><th>Incident type</th><th>Reviewed</th><th>Correct</th><th>Partial</th><th>Incorrect</th><th>Accuracy</th></tr>
+    {% for t, v in a.by_type.items() %}
+    <tr><td>{{ t }}</td><td>{{ v.reviewed }}</td><td>{{ v.correct }}</td><td>{{ v.partial }}</td><td>{{ v.incorrect }}</td>
+      <td><span class="pill {{ 'ok' if v.accuracy >= 0.8 else ('mid' if v.accuracy >= 0.5 else 'bad') }}">{{ "%d%%" % (v.accuracy * 100) }}</span></td></tr>
+    {% else %}<tr><td colspan="6" class="muted">No signed-off RCAs yet.</td></tr>{% endfor %}
+  </table>
+</section>
+
+<section class="card">
+  <h2>Confidence calibration</h2>
+  <p class="muted">Average confidence the agent stated, by verdict. A well-calibrated agent is clearly more confident when it is right.</p>
+  <table>
+    <tr><th>Verdict</th><th>Average stated confidence</th></tr>
+    {% for v, c in a.avg_confidence.items() %}<tr><td>{{ v }}</td><td>{{ "%d%%" % (c * 100) if c is not none else "-" }}</td></tr>{% endfor %}
+  </table>
+</section>
+{% endblock %}

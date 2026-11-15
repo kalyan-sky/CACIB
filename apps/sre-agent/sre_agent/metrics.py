@@ -20,3 +20,7 @@ K8S_API_ERRORS = Counter("sre_agent_kubernetes_api_errors_total", "Kubernetes AP
 INVESTIGATION_TIMEOUTS = Counter("sre_agent_investigation_timeouts_total", "Investigations that hit the time limit",
                                  ["cluster"])
 QUEUE_DEPTH = Gauge("sre_agent_queue_depth", "Alerts waiting to be investigated")
+DIAGNOSIS_FEEDBACK = Counter("sre_agent_diagnosis_feedback_total", "Engineer verdicts on the agent's root cause",
+                             ["incident_type", "verdict"])
+DIAGNOSIS_ACCURACY = Gauge("sre_agent_diagnosis_accuracy", "Share of signed-off RCAs where the agent was right "
+                           "(partial counts half)", ["incident_type"])

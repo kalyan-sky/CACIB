@@ -8,6 +8,7 @@
   <div class="tile"><b>{{ stats.active }}</b><span>Active</span></div>
   <div class="tile"><b>{{ stats.resolved }}</b><span>Resolved</span></div>
   <div class="tile"><b>{{ stats.pending_approvals }}</b><span>Pending approvals</span></div>
+  <div class="tile"><b><a href="/accuracy">{{ "%d%%" % (accuracy.accuracy * 100) if accuracy.accuracy is not none else "-" }}</a></b><span>Agent accuracy ({{ accuracy.reviewed }} reviewed)</span></div>
 </section>
 
 <section class="health">

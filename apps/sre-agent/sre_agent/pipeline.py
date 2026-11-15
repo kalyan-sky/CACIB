@@ -13,7 +13,7 @@ import logging
 import time
 from typing import Callable
 
-from . import metrics, tlsprobe
+from . import history, metrics, tlsprobe
 from .analysis.llm import LlmAnalyzer
 from .analysis.rules import build_report
 from .config import Settings
@@ -148,6 +148,7 @@ class Pipeline:
             report = build_report(alert, evidence, incident_id)
             metrics.ANALYSIS_SECONDS.labels("rules").observe(time.monotonic() - t)
             report = self.analyzer.refine(report, evidence)
+            self._add_history(incident_id, report)
             self.store.save_investigation(incident_id, evidence.model_dump(), report.model_dump())
         except Exception as e:
             log.exception("analysis failed", extra={"incident": incident_id})
@@ -211,6 +212,22 @@ class Pipeline:
         if status in ("sent", "failed"):
             self.store.audit("sre-agent", f"email.{status}", incident_id)
         return status
+
+    def _add_history(self, incident_id: str, report: IncidentReport) -> None:
+        """Seen before? Attach similar past incidents and flag recurrences. Never blocks the report."""
+        try:
+            inc = self.store.get(incident_id) or {}
+            report.similar_incidents = history.find_similar(self.store, inc, report)
+            report.recurrences_30d = history.recurrence(self.store, inc, report)
+            if report.recurrences_30d >= 2:
+                report.analysis_notes.append(
+                    f"Recurring: {report.recurrences_30d} earlier {report.incident_type} incidents on this workload in "
+                    "30 days. Fixes are not sticking: open a problem record and look for the underlying cause.")
+            if any(s["agent_verdict"] == "incorrect" for s in report.similar_incidents):
+                report.analysis_notes.append("An engineer corrected the agent's diagnosis on a similar incident: "
+                                             "check 'Seen before' for the real cause.")
+        except Exception as e:
+            log.warning("history lookup failed", extra={"incident": incident_id, "error": str(e)[:200]})
 
     def fix_script(self, incident_id: str) -> str | None:
         inc = self.store.get(incident_id)

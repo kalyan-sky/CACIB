@@ -27,6 +27,7 @@
 <section class="card"><h2>5. Root cause</h2>
   <p><b>{{ r.root_cause }}</b></p>
   <p class="muted">{{ r.root_cause_status }}, {{ (r.root_cause_confidence * 100) | round | int }}% confidence · engineer confirmation: {{ r.root_cause_confirmation }}</p>
+  {% if r.agent_verdict %}<p>Agent diagnosis reviewed: <span class="pill {{ 'ok' if r.agent_verdict == 'correct' else ('mid' if r.agent_verdict == 'partial' else 'bad') }}">{{ r.agent_verdict }}</span>{% if r.actual_cause_type %} (real type: {{ r.actual_cause_type }}){% endif %}</p>{% endif %}
   <h3>5 whys</h3>
   <ol>{% for w in r.five_whys %}<li><b>{{ w.question }}</b> {{ w.answer }} <span class="pill {{ 'ok' if w.basis == 'evidence' else 'mid' }}">{{ basis[w.basis] }}</span></li>{% endfor %}</ol>
   <h3>Evidence (observed)</h3>
@@ -46,6 +47,8 @@
   {% for a in r.capa %}<tr><td>{{ loop.index }}</td><td>{{ a.action }}</td><td>{{ a.kind }}</td><td>{{ a.owner }}</td><td>{{ a.due }}</td><td>{{ a.status }}</td></tr>{% endfor %}</table>
 </section>
 
+{% if r.related %}<section class="card"><h2>Related incidents</h2><ul>{% for s in r.related %}<li><a href="/incidents/{{ s.incident_id }}">{{ s.incident_id }}</a> ({{ s.date }}): {{ s.root_cause }} <span class="muted">({{ s.root_cause_source }}{{ ", fixed by: " ~ s.fix if s.fix }})</span></li>{% endfor %}</ul></section>{% endif %}
+
 <section class="card"><h2>8. Lessons learned</h2><ul>{% for l in r.lessons %}<li>{{ l }}</li>{% endfor %}</ul>
   {% if r.open_questions %}<h2>9. Open questions</h2><ul>{% for q in r.open_questions %}<li>{{ q }}</li>{% endfor %}</ul>{% endif %}
 </section>
@@ -58,7 +61,13 @@
   <form method="post" action="/incidents/{{ r.incident_id }}/rca" class="rca-form">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Actions taken (what you changed, when, through which change/MR)<textarea name="actions_taken" rows="3">{{ notes.actions_taken }}</textarea></label>
-    <label>Root cause confirmation (confirm the agent's cause, or state the real one)<textarea name="root_cause_confirmation" rows="2">{{ notes.root_cause_confirmation }}</textarea></label>
+    <fieldset class="verdict"><legend>Was the agent's root cause right? (required to sign off)</legend>
+      {% for v, label in [("correct", "Correct"), ("partial", "Partly correct"), ("incorrect", "Incorrect")] %}
+      <label class="inline"><input type="radio" name="agent_verdict" value="{{ v }}" {{ 'checked' if notes.agent_verdict == v }}> {{ label }}</label>
+      {% endfor %}
+      <label>If not correct: the real incident type (e.g. OOMKilled, CertificateExpired, NodeNotReady)<input name="actual_cause_type" value="{{ notes.actual_cause_type or '' }}" size="30"></label>
+    </fieldset>
+    <label>Root cause confirmation (confirm the agent's cause, or state the real one; required if it was incorrect)<textarea name="root_cause_confirmation" rows="2">{{ notes.root_cause_confirmation }}</textarea></label>
     <label>Lessons learned (one per line)<textarea name="lessons" rows="3">{{ notes.lessons }}</textarea></label>
     <label>Extra follow-up actions (one per line)<textarea name="follow_ups" rows="2">{{ notes.follow_ups }}</textarea></label>
     <div><button name="action" value="save">Save draft</button> <button name="action" value="sign_off" class="secondary">Sign off (final)</button></div>

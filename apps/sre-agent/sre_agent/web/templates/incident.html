@@ -24,6 +24,21 @@
   {% if r.symptoms %}<h3>Symptoms</h3><ul>{% for s in r.symptoms %}<li>{{ s }}</li>{% endfor %}</ul>{% endif %}
 </section>
 
+{% if r.similar_incidents %}
+<section class="card">
+  <h2>Seen before</h2>
+  {% if r.recurrences_30d >= 2 %}<p class="warn"><b>Recurring:</b> {{ r.recurrences_30d }} earlier incidents of this type on this workload in 30 days. Fixes are not sticking.</p>{% endif %}
+  <table><tr><th>Incident</th><th>Date</th><th>Root cause</th><th>What fixed it</th><th>Resolved in</th><th>Agent was</th></tr>
+  {% for s in r.similar_incidents %}
+  <tr><td><a href="/incidents/{{ s.incident_id }}">{{ s.incident_id }}</a><div class="small muted">{{ s.match }}</div></td>
+    <td class="small">{{ s.date }}<div class="muted">{{ s.cluster }}/{{ s.workload }}</div></td>
+    <td class="small">{{ s.root_cause }}<div class="muted">({{ s.root_cause_source }})</div></td>
+    <td class="small">{{ s.fix or "not recorded" }}</td>
+    <td class="small">{{ "%d min" % s.time_to_resolve_min if s.time_to_resolve_min is not none else "-" }}</td>
+    <td>{% if s.agent_verdict %}<span class="pill {{ 'ok' if s.agent_verdict == 'correct' else ('mid' if s.agent_verdict == 'partial' else 'bad') }}">{{ s.agent_verdict }}</span>{% else %}<span class="muted small">not reviewed</span>{% endif %}</td></tr>
+  {% endfor %}</table>
+</section>
+{% endif %}
 {% if r.commands_for_human_execution %}
 <section class="card">
   <h2>Ready to run <span class="muted small">(after approval; the agent does not run it)</span></h2>
