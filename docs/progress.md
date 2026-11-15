@@ -13,6 +13,10 @@
 - [x] RCA workflow and alert coverage added (draft -> RCA for review email -> engineer sign-off -> final RCA).
 - [x] Certificate monitoring live (x509 exporter + blackbox probes): cert-lab wrong-hostname incident detected, emailed with a guide,
       fixed by hand (new CSR with the right names, lab CA, Secret replaced, restart), verified with openssl (return code 0), RCA email received.
+- [x] Ready-to-run commands + fix scripts: c07 OOMKilled fixed with the agent's script. Second certificate run:
+      both certificates (expiring + wrong hostname) fixed and verified at every layer (Secret, client handshake,
+      alerts resolved, incidents resolved); both RCAs signed off. Live runs found two guide bugs, both fixed:
+      the fix script must wait for new.crt at the CA step, and exporter-only alerts must use the certificate's hostname.
 
 ## Classic cases (`./k8s-classics.sh`)
 
