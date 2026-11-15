@@ -9,6 +9,7 @@ factors as a hypothesis. If no checker matches, the result is inconclusive.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -195,30 +196,47 @@ def check_certificate(c: Ctx) -> Finding | None:
                   "openssl x509 -noout -subject -issuer -dates -ext subjectAltName",
                   "Shows the public certificate stored in the Secret (run by an engineer; the agent cannot read Secrets).",
                   "notAfter and the DNS names; compare with what the endpoint presents.")
-    probe_cmd = D(f"kubectl run tls-check --rm -it --restart=Never --image=alpine/openssl -- s_client -connect "
-                  f"{host}:{port} -servername {host} -verify_return_error </dev/null",
-                  "Repeats the handshake a client makes; 'Verify return code' shows the exact failure.")
+    svc = host.split(".")[0] if host.endswith((".svc", ".svc.cluster.local")) else "<service>"
+    names = sorted({host, *((tls or {}).get("dns_names") or [])} - {"<host>"}) if tls else []
+    ca_file = os.environ.get("SRE_AGENT_GUIDE_CA_FILE", "internal-ca.pem")  # where engineers keep the internal CA
+    if tls and not tls.get("hostname_matches") and host != "<host>":
+        names = [host, f"{host}.cluster.local"] if host.endswith(".svc") else [host]  # the names clients use
+    san = ",".join(f"DNS:{n}" for n in names) or "DNS:<name-clients-use>"
+    cn = names[0] if names else "<name-clients-use>"
+    # Every command is runnable as written (placeholders in <>), or a "#" comment that is harmless to paste.
+    # Verification runs from the engineer's machine: trusted internal CA + hostname check, no pod created.
+    check = (f"kubectl -n {c.ns} port-forward svc/{svc} 18443:{port} >/dev/null 2>&1 & sleep 3; "
+             f"openssl s_client -connect 127.0.0.1:18443 -servername {host} -verify_hostname {host} "
+             f"-CAfile {os.environ.get('SRE_AGENT_GUIDE_CA_FILE', 'internal-ca.pem')} -verify_return_error </dev/null 2>/dev/null "
+             "| grep -E 'subject=|NotAfter|Verify return code'; kill %1")
+    probe_cmd = D(check, "Repeats the handshake a verifying client makes, with the hostname check; "
+                         "'Verify return code' shows the exact failure.")
     replace = [
-        R("Request a new certificate from the issuing CA (or let cert-manager re-issue it) with these DNS names: "
-          + ", ".join(sorted({host, *((tls or {}).get("dns_names") or [])} - {"<host>"})) if tls else
-          "Request a new certificate from the issuing CA (or let cert-manager re-issue it) with the same DNS names",
-          "Never generate a self-signed certificate for a production endpoint; use the bank's CA process."),
-        R(f"kubectl -n {c.ns} create secret tls {sname} --cert=new.crt --key=new.key --dry-run=client -o yaml "
+        R(f'openssl req -new -newkey rsa:2048 -nodes -keyout new.key -out new.csr -subj "/CN={cn}" '
+          f'-addext "subjectAltName={san}"',
+          "Creates a new private key and a certificate request with every name clients use.",
+          "new.key and new.csr"),
+        R("# Send new.csr to the issuing CA (bank PKI team, ACM Private CA, or let cert-manager re-issue it); "
+          "save the signed certificate followed by its intermediates as new.crt",
+          "An organisational step, not a command. Never self-sign a production certificate."),
+        R("openssl x509 -noout -subject -enddate -ext subjectAltName -in new.crt",
+          "Check the names and dates of the new certificate before deploying it."),
+        R(f"kubectl -n {c.ns} get secret {sname} -o yaml > {sname}.backup.yaml && "
+          f"kubectl -n {c.ns} create secret tls {sname} --cert=new.crt --key=new.key --dry-run=client -o yaml "
           f"| kubectl apply -f -",
-          "Replaces the certificate and key in place; keep the old files until the new ones are verified.",
-          f"secret/{sname} configured"),
-        R(f"kubectl -n {c.ns} rollout restart deployment/{consumer}",
+          "Backs up the current Secret (for rollback; store it securely, it contains the old key), then replaces "
+          "the certificate and key.", f"secret/{sname} configured"),
+        R(f"kubectl -n {c.ns} rollout restart deployment/{consumer} && "
+          f"kubectl -n {c.ns} rollout status deployment/{consumer}",
           "Most servers (nginx, Java) read the certificate only at start-up.",
-          f"deployment.apps/{consumer} restarted"),
+          f'deployment "{consumer}" successfully rolled out'),
     ]
-    verify = [V(f"kubectl run tls-check --rm -it --restart=Never --image=alpine/openssl -- s_client -connect "
-                f"{host}:{port} -servername {host} -verify_return_error </dev/null | grep -E 'Verify return|NotAfter'",
-                "The handshake must verify.", "Verify return code: 0 (ok)"),
-              V("Wait for the alert to resolve (the probe and exporter re-check every minute)",
-                "Monitoring confirms the fix from the client's point of view.")]
-    rollback = [B(f"kubectl -n {c.ns} create secret tls {sname} --cert=old.crt --key=old.key --dry-run=client -o yaml "
-                  f"| kubectl apply -f - && kubectl -n {c.ns} rollout restart deployment/{consumer}",
-                  "Only if the new certificate breaks clients and the old one is still valid.")]
+    verify = [V(check, "The handshake must verify for the name clients use.", "Verify return code: 0 (ok)"),
+              V("# Wait for the certificate alerts to resolve (checks run every 30-60 s); the RCA email follows",
+                "Monitoring confirms the fix from the clients' point of view.")]
+    rollback = [B(f"kubectl apply -f {sname}.backup.yaml && kubectl -n {c.ns} rollout restart deployment/{consumer}",
+                  "Only if the new certificate breaks clients and the old one is still valid. Delete the backup "
+                  "file afterwards (it contains a private key).")]
     common = dict(investigations=[show_cert, probe_cmd], verification=verify, rollback=rollback)
     renewal_factors = ["Renewal is manual and nobody owned the expiry date (hypothesis)",
                        "An automated renewal (cert-manager/ACM) failed: check its status and events (hypothesis)"]
@@ -270,7 +288,7 @@ def check_certificate(c: Ctx) -> Finding | None:
                        remediation=[R(f"cat leaf.crt intermediate.crt > fullchain.crt && kubectl -n {c.ns} create "
                                       f"secret tls {sname} --cert=fullchain.crt --key=tls.key --dry-run=client -o yaml "
                                       "| kubectl apply -f -", "Serve the full chain: leaf first, then intermediates."),
-                                    replace[2]],
+                                    replace[4]],
                        expected_outcome="Clients build the chain to a trusted root.",
                        risk="Low.", severity_floor="HIGH", **common)  # type: ignore[arg-type]
     if (tls and tls.get("verified") and (tls.get("days_left") or 999) < 30) or expiry_alert:
@@ -1040,7 +1058,9 @@ def build_report(alert: NormalizedAlert, ev: InvestigationEvidence, incident_id:
         steps.append(ResolutionStep(
             title="2. Apply the fix (human, after approval)",
             explanation=("These commands were NOT executed by the agent. Run them only after the approval in the "
-                         "incident dashboard and your change process. " + (GITOPS_NOTE if c.gitops else "")).strip(),
+                         "incident dashboard and your change process. Lines starting with # are instructions; "
+                         "replace any value in <angle brackets> before running. "
+                         + (GITOPS_NOTE if c.gitops else "")).strip(),
             commands=finding.remediation))
     if finding.verification:
         steps.append(ResolutionStep(title=f"{len(steps) + 1}. Verify the resolution (read-only)",

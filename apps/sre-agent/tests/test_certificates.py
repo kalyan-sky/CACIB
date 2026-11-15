@@ -238,3 +238,40 @@ def test_rca_expired_from_exporter_alert(settings, store, smtp):
     assert report.incident_type == "CertificateExpired" and report.severity == "CRITICAL"
     assert "Secret cert-lab/web-wronghost-tls has expired" in report.root_cause
     assert "Now: every client" in report.business_impact
+
+
+def test_certificate_guides_are_copy_paste_safe(settings, store, smtp):
+    """Regression: every guide line runs as written in bash, or is a harmless # comment; no pods created."""
+    import subprocess
+
+    cases = [
+        (tls_result(verified=False, verify_error=f"Hostname mismatch, certificate is not valid for '{HOST}'.",
+                    dns_names=["payments.wrong.example"], hostname_matches=False), "TLSEndpointHandshakeFailing"),
+        (tls_result(verified=False, verify_error="certificate has expired", days_left=-1), "TLSEndpointHandshakeFailing"),
+        (tls_result(verified=False, verify_error="unable to get local issuer certificate"), "TLSEndpointHandshakeFailing"),
+        (tls_result(days_left=1.0), "TLSEndpointCertExpiringSoon"),
+    ]
+    for i, (tls, alertname) in enumerate(cases):
+        from sre_agent.store import Store
+
+        report, _, _ = run_tls(settings, Store(":memory:"), tls, alertname=alertname, namespace=NS,
+                               deployment="web-wronghost", instance=f"https://{HOST}:443")
+        cmds = [c.command for step in report.resolution_steps for c in step.commands]
+        assert cmds, report.incident_type
+        for cmd in cmds:
+            if cmd.startswith("# ") or cmd.startswith("Open ") or cmd.startswith("Wait"):
+                continue
+            assert "<" not in cmd.replace("</dev/null", ""), f"placeholder bash would misread: {cmd}"
+            assert "kubectl run" not in cmd, cmd
+            assert subprocess.run(["bash", "-n", "-c", cmd]).returncode == 0, cmd
+        verify = " ".join(c.command for c in report.verification_steps)
+        assert "-verify_hostname " + HOST in verify and "-CAfile" in verify
+
+
+def test_wrong_host_fix_lists_the_names_clients_use(settings, store, smtp):
+    tls = tls_result(verified=False, verify_error="Hostname mismatch", dns_names=["payments.wrong.example"],
+                     hostname_matches=False)
+    report, _, _ = run_tls(settings, store, tls, alertname="TLSEndpointHandshakeFailing", namespace=NS,
+                           deployment="web-wronghost", instance=f"https://{HOST}:443")
+    csr = next(c.command for c in report.commands_for_human_execution if c.command.startswith("openssl req"))
+    assert f"DNS:{HOST}" in csr and "payments.wrong.example" not in csr

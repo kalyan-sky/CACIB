@@ -22,6 +22,7 @@ data:
   SRE_AGENT_CRITICAL_NAMESPACES: payments,core-banking
   SRE_AGENT_DASHBOARD_URL: "__DASHBOARD_URL__"
   SRE_AGENT_LLM_PROVIDER: none
+  SRE_AGENT_GUIDE_CA_FILE: "~/.cert-lab/ca.crt" # internal CA path used in TLS commands for engineers (lab CA)
   SRE_AGENT_MAX_CONCURRENT: "3"
   SRE_AGENT_INVESTIGATION_TIMEOUT_SECONDS: "60"
   SRE_AGENT_LOG_TAIL_LINES: "200"

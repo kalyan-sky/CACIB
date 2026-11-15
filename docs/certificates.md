@@ -70,7 +70,18 @@ After about 6 minutes you get **two incident emails**:
 
 `web-healthy` raises nothing, which proves the checks aren't simply always red.
 
-Then do what the guide says, or run `make cert-lab ARGS=renew`. Both certificates are reissued correctly and
+Then follow the guide in the email, in order. Lines starting with `#` are instructions, not commands.
+In the lab, "send new.csr to the CA" means signing it with the lab CA:
+
+```bash
+printf 'subjectAltName=DNS:%s,DNS:%s.cluster.local\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid\n' $H $H > new.ext
+openssl x509 -req -in new.csr -CA ~/.cert-lab/ca.crt -CAkey ~/.cert-lab/ca.key -CAcreateserial -days 90 -sha256 -extfile new.ext -out new.crt
+```
+(with `H=web-wronghost.cert-lab.svc`). The verification command uses `~/.cert-lab/ca.crt` and checks the
+hostname, so `Verify return code: 0 (ok)` means a real client would accept the certificate. Afterwards,
+delete `new.key` and the `*.backup.yaml` file: they contain private keys.
+
+Or let the script do the same: `make cert-lab ARGS=renew`. Both certificates are reissued correctly and
 the servers restart. The alerts resolve within about 5 minutes, and the **RCA for review** emails arrive.
 Complete and sign off each RCA in the dashboard. Clean up with `make cert-lab ARGS=reset`.
 
