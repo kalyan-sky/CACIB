@@ -275,3 +275,54 @@ def test_wrong_host_fix_lists_the_names_clients_use(settings, store, smtp):
                            deployment="web-wronghost", instance=f"https://{HOST}:443")
     csr = next(c.command for c in report.commands_for_human_execution if c.command.startswith("openssl req"))
     assert f"DNS:{HOST}" in csr and "payments.wrong.example" not in csr
+
+
+@pytest.mark.parametrize("probe_result", [
+    tls_result(hostname="web-expiring.cert-lab.svc", endpoint="web-expiring.cert-lab.svc:443", days_left=0.9,
+               dns_names=["web-expiring.cert-lab.svc"], subject_cn="web-expiring.cert-lab.svc"),
+    None,  # the endpoint check failed or is not possible: names still come from the certificate
+])
+def test_exporter_alert_guide_has_no_placeholders(settings, probe_result, smtp):
+    """Regression (seen live): CertificateExpiringCritical from the exporter, no endpoint label."""
+    import subprocess
+
+    import test_scenarios
+
+    from sre_agent.store import Store
+
+    fake = FakeKube(pods=[cert_pod()], deployments=[deployment("web-wronghost", ns=NS, available=1, replicas=1)])
+    original = test_scenarios.Pipeline
+    probed = []
+
+    class P(original):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+
+            def prober(endpoint):
+                probed.append(endpoint)
+                if probe_result is None:
+                    raise OSError("no route")
+                return probe_result
+            self.tls_prober = prober
+
+    test_scenarios.Pipeline = P
+    try:
+        report, _, _ = run(settings, Store(":memory:"), fake, alertname="CertificateExpiringCritical",
+                           severity="critical", namespace=NS, secret="web-expiring-tls",
+                           subject_CN="web-expiring.cert-lab.svc")
+    finally:
+        test_scenarios.Pipeline = original
+    assert probed == ["https://web-expiring.cert-lab.svc:443"]
+    assert report.incident_type == "CertificateExpiringSoon"
+    for step in report.resolution_steps:
+        for c in step.commands:
+            if c.command.startswith("#"):
+                continue
+            body = c.command.replace("</dev/null", "")
+            assert "<" not in body, c.command
+            assert subprocess.run(["bash", "-n", "-c", c.command]).returncode == 0, c.command
+    fixes = " ".join(commands_of(report, "remediation"))
+    assert '-subj "/CN=web-expiring.cert-lab.svc" -addext "subjectAltName=DNS:web-expiring.cert-lab.svc' in fixes
+    assert 'read -rp "Deployment that serves Secret web-expiring-tls' in fixes  # nothing mounts it in this fixture
+    verify = " ".join(c.command for c in report.verification_steps)
+    assert "svc/web-expiring " in verify and "-verify_hostname web-expiring.cert-lab.svc" in verify

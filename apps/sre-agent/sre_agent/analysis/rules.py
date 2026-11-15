@@ -210,6 +210,11 @@ def check_certificate(c: Ctx) -> Finding | None:
     a, tls = c.alert, c.ev.tls
     if not a.alertname.startswith(CERT_ALERT_PREFIXES) and not tls:
         return None
+    from_exporter = bool(a.secret) and not a.endpoint  # x509 exporter alert: the certificate is the subject
+    unreachable = tls.get("connect_error") if tls else None
+    if from_exporter and unreachable:
+        c.ev.errors.append(f"extra endpoint check not possible: {unreachable}")
+        tls = None  # the exporter's data is the evidence; a failed side-check must not change the diagnosis
     secret = a.secret or next((s for p in c.ev.pods for s in p.get("secrets_mounted", []) if "tls" in s), None)
     sname = secret or "<tls-secret>"
     evidence: list[Evidence] = []
@@ -235,16 +240,21 @@ def check_certificate(c: Ctx) -> Finding | None:
             evidence.append(Evidence(source="pod.spec", observation=f"pod {p['name']} mounts Secret(s) "
                                                                     f"{', '.join(p['secrets_mounted'])}"))
 
-    host = (tls or {}).get("hostname") or "<host>"
+    # the host clients use: from the handshake, else the certificate's own name (exporter label)
+    host = (tls or {}).get("hostname") or (a.labels.get("subject_CN") or "").lower() or "<host>"
     port = ((tls or {}).get("endpoint") or ":443").rsplit(":", 1)[-1]
     consumer = next((u.split("/", 1)[1] for u in c.ev.secret_consumers if u.startswith("deployment/")), None) \
-        or (c.dep_name if c.dep_name != "<deployment>" else "<deployment>")
+        or (c.dep_name if c.dep_name != "<deployment>" else None)
+    deploy = consumer or '"$DEPLOY"'
+    ask_deploy = "" if consumer else (ask("DEPLOY", f"Deployment that serves Secret {sname} (nothing found mounting it)")
+                                      + " && ")
     show_cert = D(f"kubectl -n {c.ns} get secret {sname} -o jsonpath='{{.data.tls\\.crt}}' | base64 -d | "
                   "openssl x509 -noout -subject -issuer -dates -ext subjectAltName",
                   "Shows the public certificate stored in the Secret (run by an engineer; the agent cannot read Secrets).",
                   "notAfter and the DNS names; compare with what the endpoint presents.")
     svc = host.split(".")[0] if host.endswith((".svc", ".svc.cluster.local")) else "<service>"
-    names = sorted({host, *((tls or {}).get("dns_names") or [])} - {"<host>"}) if tls else []
+    names = sorted({host, *((tls or {}).get("dns_names") or [])} - {"<host>"}) if tls else \
+        ([host, f"{host}.cluster.local"] if host.endswith(".svc") else [host] if host != "<host>" else [])
     ca_file = os.environ.get("SRE_AGENT_GUIDE_CA_FILE", "internal-ca.pem")  # where engineers keep the internal CA
     if tls and not tls.get("hostname_matches") and host != "<host>":
         names = [host, f"{host}.cluster.local"] if host.endswith(".svc") else [host]  # the names clients use
@@ -277,15 +287,15 @@ def check_certificate(c: Ctx) -> Finding | None:
           f"| kubectl apply -f -",
           "Backs up the current Secret (for rollback; store it securely, it contains the old key), then replaces "
           "the certificate and key.", f"secret/{sname} configured"),
-        R(f"kubectl -n {c.ns} rollout restart deployment/{consumer} && "
-          f"kubectl -n {c.ns} rollout status deployment/{consumer}",
+        R(f"{ask_deploy}kubectl -n {c.ns} rollout restart deployment/{deploy} && "
+          f"kubectl -n {c.ns} rollout status deployment/{deploy}",
           "Most servers (nginx, Java) read the certificate only at start-up.",
-          f'deployment "{consumer}" successfully rolled out'),
+          f'deployment "{consumer or "..."}" successfully rolled out'),
     ]
     verify = [V(check, "The handshake must verify for the name clients use.", "Verify return code: 0 (ok)"),
               V("# Wait for the certificate alerts to resolve (checks run every 30-60 s); the RCA email follows",
                 "Monitoring confirms the fix from the clients' point of view.")]
-    rollback = [B(f"kubectl apply -f {sname}.backup.yaml && kubectl -n {c.ns} rollout restart deployment/{consumer}",
+    rollback = [B(f"{ask_deploy}kubectl apply -f {sname}.backup.yaml && kubectl -n {c.ns} rollout restart deployment/{deploy}",
                   "Only if the new certificate breaks clients and the old one is still valid. Delete the backup "
                   "file afterwards (it contains a private key).")]
     common = dict(investigations=[show_cert, probe_cmd], verification=verify, rollback=rollback)

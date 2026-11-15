@@ -56,6 +56,12 @@ class DiagnosticEngine:
         try:
             if alert.endpoint and self.tls_prober:
                 self._collect_tls(ev, alert.endpoint)
+            elif alert.secret and self.tls_prober:
+                # the certificate exporter names the certificate (subject_CN); for an in-cluster
+                # Service name, check what that endpoint serves as well
+                cn = (alert.labels.get("subject_CN") or "").lower()
+                if cn.endswith((".svc", ".svc.cluster.local")):
+                    self._collect_tls(ev, f"https://{cn}:443")
             if ns and alert.secret:
                 self._collect_secret_consumers(ev, ns, alert.secret)
             pods: list[dict[str, Any]] = []
