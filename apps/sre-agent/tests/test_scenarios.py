@@ -67,7 +67,14 @@ def test_crashloop_detects_logs_events_cause_guide_email_approval(settings, stor
     msg = smtp.sent[0]
     assert msg["Subject"] == f"[CRITICAL] Kubernetes Incident Detected - test-eks - {NS}"
     html = msg.get_body(("html",)).get_content()
-    assert "DB_URL is not set" in html and "Proposed remediation command (NOT executed)" in html
+    assert "DB_URL is not set" in html
+    for section in ("1 · WHAT HAPPENED", "2 · ROOT CAUSE", "3 · EVIDENCE (OBSERVED)", "4 · SEEN BEFORE",
+                    "5 · WHAT TO DO", "6 · RISK AND PREREQUISITES"):
+        assert section in html, section
+    assert ">FIX</span>" in html and "needs approval" in html and "made <b>no changes</b>" in html
+    assert "payments-gateway keeps crashing at start-up" in html  # plain-English headline
+    text = msg.get_body(("plain",)).get_content()
+    assert "2 · ROOT CAUSE" in text and "FIX (needs approval)" in text
     assert "head-sre@example.com" in msg["To"]  # prod:CRITICAL routing
     approvals = store.approvals(incident_id=report.incident_id)
     assert len(approvals) == 1 and approvals[0]["status"] == "Pending"

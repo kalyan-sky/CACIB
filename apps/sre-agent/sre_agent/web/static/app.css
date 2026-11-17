@@ -49,3 +49,28 @@ fieldset.verdict { border:1px solid var(--line); border-radius:6px; padding:8px 
 fieldset.verdict legend { font-size:12px; color:var(--muted); }
 label.inline { flex-direction:row !important; align-items:center; gap:4px; color:var(--fg) !important; font-size:14px !important; }
 header.top a.brand + a.brand { margin-left:8px; color:#9198a1; font-size:13px; }
+
+/* ---- incident layout (same order as the email) */
+.incident-head h1 { font-size:22px; margin:6px 0 10px; }
+.incident-head .kicker { font-size:11px; letter-spacing:.4px; color:var(--muted); margin-bottom:6px; }
+.sevbg-CRITICAL { background:#fef3f2; } .sevbg-HIGH { background:#fff6ed; } .sevbg-MEDIUM { background:#fffaeb; }
+.sevbg-LOW { background:#eff8ff; } .sevbg-INFO { background:#f9fafb; }
+table.glance { width:auto; } table.glance th { width:110px; color:var(--muted); font-weight:400; border:0; padding:3px 12px 3px 0; }
+table.glance td { border:0; padding:3px 0; }
+h2.sec { font-size:13px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); }
+p.lead { font-size:15px; }
+.cause { border-left:4px solid var(--crit); background:var(--bg); padding:10px 12px; font-size:15px; margin-bottom:8px; }
+.sevborder-HIGH { border-color:var(--high); } .sevborder-MEDIUM { border-color:var(--med); }
+.sevborder-LOW { border-color:var(--low); } .sevborder-INFO { border-color:var(--info); }
+table.evidence td:first-child { width:140px; } code.src { background:var(--bg); padding:1px 6px; border-radius:4px; }
+.seen { border:1px solid var(--line); border-radius:6px; padding:8px 10px; margin:6px 0; }
+.fastest { background:#ecfdf3; border:1px solid #abefc6; border-radius:6px; padding:10px 12px; margin-bottom:8px; }
+.nofix, .manual { background:#fffaeb; border:1px dashed #fec84b; border-radius:6px; padding:8px 10px; margin:4px 0; }
+ol.steps { padding-left:22px; } ol.steps li { margin:12px 0; }
+.badge { display:inline-block; font-size:11px; font-weight:700; padding:1px 7px; border-radius:10px; border:1px solid; }
+.badge-check { color:#175cd3; background:#eff8ff; } .badge-fix { color:#b54708; background:#fffaeb; }
+.badge-verify { color:#067647; background:#ecfdf3; } .badge-rollback { color:#b42318; background:#fef3f2; }
+pre.cmd-dark { background:#0d1117; color:#e6edf3; border-color:#0d1117; }
+p.actions a.button { display:inline-block; background:#1f6feb; color:#fff; text-decoration:none; padding:6px 12px;
+  border-radius:6px; margin:0 6px 6px 0; font-size:14px; }
+p.actions a.secondary-btn { background:#475467; }

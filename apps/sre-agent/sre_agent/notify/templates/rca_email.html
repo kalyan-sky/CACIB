@@ -1,51 +1,95 @@
+{#- RCA email: same header, glance block and section style as the incident email. -#}
+{%- set sev = {"CRITICAL": ("#b42318", "#fef3f2"), "HIGH": ("#c4320a", "#fff6ed"), "MEDIUM": ("#b54708", "#fffaeb"),
+               "LOW": ("#175cd3", "#eff8ff"), "INFO": ("#475467", "#f9fafb")}[r.severity] -%}
+{%- set basis = {"evidence": ("observed", "#067647"), "hypothesis": ("hypothesis", "#b54708"),
+                 "human": ("engineer", "#175cd3"), "unknown": ("not established", "#b42318")} -%}
+{%- macro h(n, title) -%}<div style="font-size:13px;font-weight:700;color:#667085;letter-spacing:.4px">{% if n %}{{ n }} · {% endif %}{{ title }}</div>{%- endmacro -%}
 <!doctype html>
-<html><body style="font-family:Segoe UI,Helvetica,Arial,sans-serif;color:#1f2328;max-width:860px;margin:0 auto;padding:16px">
-{% set sev_color = {"CRITICAL":"#b42318","HIGH":"#c4320a","MEDIUM":"#b54708","LOW":"#1d4ed8","INFO":"#475467"}[r.severity] %}
-{% set basis = {"evidence":"observed","hypothesis":"hypothesis","human":"engineer","unknown":"not established"} %}
-<p style="margin:0 0 4px;font-size:13px;color:#475467">{{ "Final root cause analysis" if final else "Root cause analysis for review: please complete and sign off" }}</p>
-<h1 style="font-size:20px;margin:0 0 10px"><span style="background:{{ sev_color }};color:#fff;padding:2px 8px;border-radius:4px;font-size:14px">{{ r.severity }}</span>
- RCA {{ r.incident_id }}: {{ r.title }}</h1>
-<table style="border-collapse:collapse;font-size:14px;margin-bottom:12px">
-{% for k, v in [("Status", r.status), ("Cluster / env", r.cluster ~ " / " ~ r.environment), ("Namespace", r.namespace or "-"),
-                ("Service", r.service or "-"), ("Owning team", r.owner_team), ("Detected", r.detected_at or "-"),
-                ("Resolved", r.resolved_at or "not yet"), ("Duration", r.duration), ("Signed off", r.signed_off)] %}
-<tr><td style="padding:2px 14px 2px 0;color:#475467">{{ k }}</td><td>{{ v }}</td></tr>
-{% endfor %}
-{% if link %}<tr><td style="padding:2px 14px 2px 0;color:#475467">Review</td><td><a href="{{ link }}">{{ link }}</a></td></tr>{% endif %}
-</table>
-<h2 style="font-size:16px;margin:16px 0 4px">1. Summary</h2><p style="margin:0">{{ r.executive_summary }}</p>
-<h2 style="font-size:16px;margin:16px 0 4px">2. Impact</h2><p style="margin:0">{{ r.impact }}</p>
-<h2 style="font-size:16px;margin:16px 0 4px">3. Timeline</h2>
-<table style="border-collapse:collapse;font-size:13px;width:100%">
-{% for t in r.timeline %}<tr><td style="padding:3px 10px 3px 0;border-bottom:1px solid #eaeef2;white-space:nowrap">{{ t.time }}</td>
-<td style="padding:3px 10px 3px 0;border-bottom:1px solid #eaeef2;color:#475467">{{ t.source }}</td>
-<td style="padding:3px 0;border-bottom:1px solid #eaeef2">{{ t.event }}</td></tr>{% endfor %}
-</table>
-<h2 style="font-size:16px;margin:16px 0 4px">4. Detection</h2><p style="margin:0">{{ r.detection }}</p>
-<h2 style="font-size:16px;margin:16px 0 4px">5. Root cause</h2>
-<p style="margin:0"><b>{{ r.root_cause }}</b></p>
-<p style="margin:4px 0;color:#475467">{{ r.root_cause_status }}, {{ (r.root_cause_confidence * 100) | round | int }}% confidence. Engineer confirmation: {{ r.root_cause_confirmation }}</p>
-<h3 style="font-size:14px;margin:10px 0 4px">5 whys</h3>
-<ol style="margin:0;padding-left:20px">{% for w in r.five_whys %}<li><b>{{ w.question }}</b> {{ w.answer }} <i style="color:#475467">({{ basis[w.basis] }})</i></li>{% endfor %}</ol>
-<h3 style="font-size:14px;margin:10px 0 4px">Evidence (observed)</h3>
-<ul style="margin:0;padding-left:20px">{% for e in r.evidence %}<li><code style="color:#475467">{{ e.source }}</code> {{ e.observation }}</li>{% else %}<li>none</li>{% endfor %}</ul>
-{% if r.contributing_factors %}<h3 style="font-size:14px;margin:10px 0 4px">Contributing factors (hypotheses)</h3>
-<ul style="margin:0;padding-left:20px">{% for f in r.contributing_factors %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
-<h2 style="font-size:16px;margin:16px 0 4px">6. Resolution</h2>
-<ul style="margin:0;padding-left:20px">{% for p in r.resolution_proposed %}<li>{{ p }}</li>{% endfor %}</ul>
-<p style="margin:6px 0 0"><b>Approval:</b> {{ r.approval }}</p>
-<p style="margin:4px 0 0"><b>Actions taken (engineer):</b> {{ r.actions_taken }}</p>
-<h2 style="font-size:16px;margin:16px 0 4px">7. Corrective and preventive actions</h2>
-<table style="border-collapse:collapse;font-size:13px;width:100%">
-<tr style="color:#475467;text-align:left"><th style="padding:3px 8px 3px 0">#</th><th style="padding:3px 8px 3px 0">Action</th><th style="padding:3px 8px 3px 0">Type</th><th style="padding:3px 8px 3px 0">Owner</th><th>Due</th></tr>
-{% for a in r.capa %}<tr><td style="padding:3px 8px 3px 0;border-bottom:1px solid #eaeef2">{{ loop.index }}</td><td style="padding:3px 8px 3px 0;border-bottom:1px solid #eaeef2">{{ a.action }}</td>
-<td style="padding:3px 8px 3px 0;border-bottom:1px solid #eaeef2">{{ a.kind }}</td><td style="padding:3px 8px 3px 0;border-bottom:1px solid #eaeef2">{{ a.owner }}</td><td style="border-bottom:1px solid #eaeef2">{{ a.due }}</td></tr>{% endfor %}
-</table>
-<h2 style="font-size:16px;margin:16px 0 4px">8. Lessons learned</h2>
-<ul style="margin:0;padding-left:20px">{% for l in r.lessons %}<li>{{ l }}</li>{% endfor %}</ul>
-{% if r.open_questions %}<h2 style="font-size:16px;margin:16px 0 4px">9. Open questions</h2>
-<ul style="margin:0;padding-left:20px">{% for q in r.open_questions %}<li>{{ q }}</li>{% endfor %}</ul>{% endif %}
-<p style="font-size:12px;color:#475467;border-top:1px solid #d0d7de;padding-top:8px;margin-top:16px">
-Drafted by the read-only SRE agent ({{ r.analysis_engine }}); the agent made no changes. Observed facts, hypotheses and engineer input are labelled.
-The Markdown version is attached (RCA-{{ r.incident_id }}.md).</p>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;background:#f2f4f7;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#101828">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f2f4f7;padding:16px 8px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;background:#ffffff;border:1px solid #eaecf0;border-radius:10px">
+
+<tr><td style="padding:18px 22px 14px;border-bottom:1px solid #eaecf0">
+  <div style="font-size:12px;color:#667085;letter-spacing:.3px">ROOT CAUSE ANALYSIS · {{ "FINAL" if final else "FOR REVIEW: PLEASE COMPLETE AND SIGN OFF" }}</div>
+  <div style="margin-top:8px">
+    <span style="display:inline-block;background:{{ sev[0] }};color:#fff;font-weight:700;font-size:12px;padding:3px 9px;border-radius:12px">{{ r.severity }}</span>
+    <span style="font-size:13px;color:#667085;margin-left:6px">{{ r.incident_id }} · {{ r.title }}</span>
+  </div>
+  <div style="font-size:20px;font-weight:700;line-height:1.3;margin-top:6px">{{ r.headline or r.title }}</div>
+</td></tr>
+
+<tr><td style="padding:14px 22px;background:{{ sev[1] }}">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px">
+    {% for k, v in [("Status", r.status), ("Where", r.cluster ~ " (" ~ r.environment ~ ") › " ~ (r.namespace or "cluster-wide") ~ " › " ~ (r.service or "-")),
+                    ("Detected", r.detected_at or "-"), ("Resolved", (r.resolved_at or "not yet") ~ " · duration " ~ r.duration),
+                    ("Owner", r.owner_team), ("Signed off", r.signed_off),
+                    ("Agent was", r.agent_verdict or "not reviewed yet")] %}
+    <tr><td style="padding:3px 12px 3px 0;color:#667085;white-space:nowrap;vertical-align:top;width:92px">{{ k }}</td>
+        <td style="padding:3px 0;vertical-align:top">{{ v }}</td></tr>
+    {% endfor %}
+  </table>
+</td></tr>
+
+<tr><td style="padding:18px 22px 4px">{{ h(1, "SUMMARY") }}<p style="margin:6px 0 0;font-size:15px;line-height:1.5">{{ r.executive_summary }}</p></td></tr>
+<tr><td style="padding:16px 22px 4px">{{ h(2, "IMPACT") }}<p style="margin:6px 0 0;font-size:14px;line-height:1.5">{{ r.impact }}</p></td></tr>
+
+<tr><td style="padding:16px 22px 4px">{{ h(3, "TIMELINE") }}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;font-size:13px;border:1px solid #eaecf0;border-radius:6px">
+    {% for t in r.timeline %}<tr><td style="padding:6px 10px;border-bottom:1px solid #f2f4f7;white-space:nowrap;color:#475467;vertical-align:top">{{ t.time }}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #f2f4f7;color:#667085;vertical-align:top">{{ t.source }}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #f2f4f7;vertical-align:top">{{ t.event }}</td></tr>{% endfor %}
+  </table></td></tr>
+
+<tr><td style="padding:16px 22px 4px">{{ h(4, "DETECTION") }}<p style="margin:6px 0 0;font-size:14px;line-height:1.5">{{ r.detection }}</p></td></tr>
+
+<tr><td style="padding:16px 22px 4px">{{ h(5, "ROOT CAUSE") }}
+  <div style="margin-top:8px;border-left:4px solid {{ sev[0] }};background:#f9fafb;padding:10px 12px;font-size:15px;line-height:1.5">{{ r.root_cause }}</div>
+  <div style="margin-top:6px;font-size:13px;color:#344054">{{ r.root_cause_status }}, {{ (r.root_cause_confidence * 100) | round | int }}% confidence ·
+    engineer confirmation: {{ r.root_cause_confirmation }}</div>
+  <div style="margin-top:10px;font-size:13px;color:#667085">5 whys</div>
+  <ol style="margin:4px 0 0;padding-left:20px;font-size:14px;line-height:1.5">
+    {% for w in r.five_whys %}<li><b>{{ w.question }}</b> {{ w.answer }}
+      <span style="font-size:11px;font-weight:700;color:{{ basis[w.basis][1] }}">{{ basis[w.basis][0] | upper }}</span></li>{% endfor %}
+  </ol>
+  <div style="margin-top:10px;font-size:13px;color:#667085">Evidence (observed)</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;font-size:14px;border:1px solid #eaecf0;border-radius:6px">
+    {% for e in r.evidence %}<tr><td style="padding:6px 10px;border-bottom:1px solid #f2f4f7;width:120px;vertical-align:top"><span style="font-family:Menlo,Consolas,monospace;font-size:12px;color:#475467;background:#f2f4f7;padding:1px 6px;border-radius:4px">{{ e.source }}</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid #f2f4f7;vertical-align:top">{{ e.observation }}</td></tr>
+    {% else %}<tr><td style="padding:6px 10px;color:#667085">none</td></tr>{% endfor %}
+  </table>
+  {% if r.contributing_factors %}<div style="margin-top:10px;font-size:13px;color:#667085">Contributing factors <i>(hypotheses, not verified)</i></div>
+  <ul style="margin:4px 0 0;padding-left:18px;font-size:14px">{% for f in r.contributing_factors %}<li>{{ f.replace(" (hypothesis)", "") }}</li>{% endfor %}</ul>{% endif %}
+</td></tr>
+
+<tr><td style="padding:16px 22px 4px">{{ h(6, "RESOLUTION") }}
+  <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:6px;font-size:14px;line-height:1.5">
+    <tr><td style="padding:2px 12px 2px 0;color:#667085;vertical-align:top;white-space:nowrap">Proposed</td><td>{% for p in r.resolution_proposed %}<code style="font-size:12.5px">{{ p }}</code><br>{% endfor %}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#667085;vertical-align:top;white-space:nowrap">Approval</td><td>{{ r.approval }}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#667085;vertical-align:top;white-space:nowrap">Actions taken</td><td><b>{{ r.actions_taken }}</b></td></tr>
+  </table></td></tr>
+
+<tr><td style="padding:16px 22px 4px">{{ h(7, "CORRECTIVE AND PREVENTIVE ACTIONS") }}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;font-size:13px;border:1px solid #eaecf0;border-radius:6px">
+    <tr style="color:#667085;text-align:left"><th style="padding:6px 10px">#</th><th style="padding:6px 10px">Action</th><th style="padding:6px 10px">Type</th><th style="padding:6px 10px">Owner</th><th style="padding:6px 10px">Due</th></tr>
+    {% for a in r.capa %}<tr><td style="padding:6px 10px;border-top:1px solid #f2f4f7">{{ loop.index }}</td><td style="padding:6px 10px;border-top:1px solid #f2f4f7">{{ a.action }}</td>
+      <td style="padding:6px 10px;border-top:1px solid #f2f4f7">{{ a.kind }}</td><td style="padding:6px 10px;border-top:1px solid #f2f4f7">{{ a.owner }}</td><td style="padding:6px 10px;border-top:1px solid #f2f4f7">{{ a.due }}</td></tr>{% endfor %}
+  </table></td></tr>
+
+{% if r.related %}<tr><td style="padding:16px 22px 4px">{{ h("", "RELATED INCIDENTS (SEEN BEFORE)") }}
+  <ul style="margin:6px 0 0;padding-left:18px;font-size:14px;line-height:1.5">{% for s in r.related %}<li><b>{{ s.incident_id }}</b> ({{ s.date }}): {{ s.root_cause }}{% if s.fix %} · fixed by: {{ s.fix }}{% endif %}</li>{% endfor %}</ul></td></tr>{% endif %}
+
+<tr><td style="padding:16px 22px 4px">{{ h(8, "LESSONS LEARNED") }}
+  <ul style="margin:6px 0 0;padding-left:18px;font-size:14px;line-height:1.5">{% for l in r.lessons %}<li>{{ l }}</li>{% endfor %}</ul></td></tr>
+{% if r.open_questions %}<tr><td style="padding:16px 22px 4px">{{ h(9, "OPEN QUESTIONS") }}
+  <ul style="margin:6px 0 0;padding-left:18px;font-size:14px;line-height:1.5">{% for q in r.open_questions %}<li>{{ q }}</li>{% endfor %}</ul></td></tr>{% endif %}
+
+<tr><td style="padding:18px 22px">
+  {% if link %}<a href="{{ link }}" style="display:inline-block;background:#175cd3;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:9px 14px;border-radius:6px">{{ "Open the RCA" if final else "Complete and sign off" }}</a>{% endif %}
+</td></tr>
+<tr><td style="padding:14px 22px 18px;border-top:1px solid #eaecf0;font-size:12px;color:#667085;line-height:1.5">
+  Drafted by the read-only SRE agent ({{ r.analysis_engine }}); the agent made no changes. Observed facts, hypotheses and engineer input are labelled.
+  The Markdown version is attached (RCA-{{ r.incident_id }}.md) for the change ticket or the wiki.
+</td></tr>
+</table></td></tr></table>
 </body></html>

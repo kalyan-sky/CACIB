@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from . import presentation
 from .models import INCONCLUSIVE, KIND_LABELS, Evidence, IncidentReport
 
 
@@ -43,6 +44,7 @@ class Action(BaseModel):
 class Rca(BaseModel):
     incident_id: str
     title: str
+    headline: str = ""
     status: str  # Draft | Resolved - awaiting sign-off | Final
     severity: str
     cluster: str
@@ -306,6 +308,7 @@ def build_rca(incident: dict[str, Any], approvals: list[dict[str, Any]], audit: 
         incident_id=incident["id"],
         title=f"{report.incident_type if report else 'Incident'}: {service or incident.get('namespace') or 'cluster'} "
               f"({incident['cluster']})",
+        headline=presentation.headline(report) if report else "",
         status=status,
         severity=incident["severity"],
         cluster=incident["cluster"],

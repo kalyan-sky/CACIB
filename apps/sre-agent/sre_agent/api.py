@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
-from . import __version__, metrics
+from . import __version__, metrics, presentation
 from .analysis.llm import LlmAnalyzer, make_provider
 from .auth import RateLimiter, User, UserDirectory, csrf_token, token_matches
 from .config import SEVERITIES, Settings
@@ -211,9 +211,10 @@ def create_app(settings: Settings | None = None, *, kube_factory: Callable[[str]
             raise HTTPException(404, "incident not found")
         report = IncidentReport.model_validate(inc["report"]) if inc.get("report") else None
         approvals = store.approvals(incident_id=incident_id)
+        v = presentation.view(report, inc, approvals[0]["status"] if approvals else None) if report else None
         tokens = {a["id"]: csrf_token(settings.session_secret, user.name, f"approval:{a['id']}") for a in approvals}
         return templates.TemplateResponse(request, "incident.html", {
-            "user": user, "inc": inc, "r": report, "approvals": approvals, "tokens": tokens,
+            "user": user, "inc": inc, "r": report, "v": v, "approvals": approvals, "tokens": tokens,
             "script": pipeline.fix_script(incident_id),
             "evidence": inc.get("evidence") or {}, "audit": store.audit_log(incident_id)})
 

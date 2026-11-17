@@ -198,7 +198,7 @@ def test_email_and_dashboard_carry_the_ready_commands(settings, store, smtp):
     report, inc, pipeline = run(settings, store, oom_case(), alertname="PodOOMKilled", namespace=NS, pod=POD)
     msg = smtp.sent[0]
     html = msg.get_body(("html",)).get_content()
-    assert "Ready to run (after approval)" in html and "--limits=memory=128Mi" in html
+    assert "Fastest:" in html and "bash fix.sh" in html and "--limits=memory=128Mi" in html
     att = [a for a in msg.iter_attachments() if a.get_filename() == f"fix-{report.incident_id}.sh.txt"]
     assert att and "set -euo pipefail" in att[0].get_content()
     assert "--limits=memory=128Mi" in pipeline.fix_script(report.incident_id)

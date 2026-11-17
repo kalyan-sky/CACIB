@@ -203,7 +203,7 @@ class Pipeline:
         try:
             status = self.notifier.notify(report, environment=inc.get("environment") or "dev",
                                           correlation_key=inc["correlation_key"], approval_status=approval_status,
-                                          force=force, script=build_script(report, approval_status))
+                                          force=force, script=build_script(report, approval_status), incident=inc)
             self.store.set_email_status(incident_id, status)
         except EmailError as e:
             log.warning("email failed", extra={"incident": incident_id, "error": str(e)})
@@ -219,6 +219,7 @@ class Pipeline:
             inc = self.store.get(incident_id) or {}
             report.similar_incidents = history.find_similar(self.store, inc, report)
             report.recurrences_30d = history.recurrence(self.store, inc, report)
+            report.track_record = self.store.accuracy()["by_type"].get(report.incident_type, {})
             if report.recurrences_30d >= 2:
                 report.analysis_notes.append(
                     f"Recurring: {report.recurrences_30d} earlier {report.incident_type} incidents on this workload in "

@@ -233,6 +233,7 @@ class IncidentReport(BaseModel):
     analysis_notes: list[str] = Field(default_factory=list)
     similar_incidents: list[dict[str, Any]] = Field(default_factory=list)  # from history.find_similar
     recurrences_30d: int = 0
+    track_record: dict[str, Any] = Field(default_factory=dict)  # engineer verdicts for this type, at report time
     started_at: str | None = None
     generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
 

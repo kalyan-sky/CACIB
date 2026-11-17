@@ -1,78 +1,106 @@
 {% extends "base.html" %}
 {% block title %}{{ inc.id }}{% endblock %}
 {% block content %}
+{% set kinds = {"diagnostic": ("CHECK", "check", "read-only"), "remediation": ("FIX", "fix", "needs approval"),
+                "verification": ("VERIFY", "verify", "read-only"), "rollback": ("ROLLBACK", "rollback", "only if it gets worse")} %}
 <p><a href="/">&larr; all incidents</a></p>
-<h1><span class="sev sev-{{ inc.severity }}">{{ inc.severity }}</span> {{ inc.id }} · {{ inc.incident_type }} <span class="muted">({{ inc.status }})</span></h1>
-<p><a href="/incidents/{{ inc.id }}/rca"><b>Root cause analysis (RCA) &rarr;</b></a> · <a href="/incidents/{{ inc.id }}/rca.md">Markdown</a></p>
-<p class="muted">Cluster <b>{{ inc.cluster }}</b> ({{ inc.environment }}) · namespace <b>{{ inc.namespace or "-" }}</b> · alerts {{ inc.alertnames | join(", ") }} · seen {{ inc.occurrences }}x · created {{ inc.created_at }} · email {{ inc.email_status }}</p>
-{% if inc.error %}<p class="warn">{{ inc.error }}</p>{% endif %}
+
+<section class="card incident-head sevbg-{{ inc.severity }}">
+  <div class="kicker">KUBERNETES SRE AGENT · READ-ONLY INVESTIGATION</div>
+  <div><span class="sev sev-{{ inc.severity }}">{{ inc.severity }}</span>
+    <span class="muted">{{ inc.id }} · {{ inc.incident_type }} · alerts {{ inc.alertnames | join(", ") }} · seen {{ inc.occurrences }}x</span></div>
+  <h1>{{ v.headline if v else inc.incident_type }}</h1>
+  {% if inc.error %}<p class="warn">{{ inc.error }}</p>{% endif %}
+  {% if r %}
+  <table class="glance">
+    <tr><th>Status</th><td>{{ v.status_line }} · email {{ inc.email_status }}</td></tr>
+    <tr><th>Where</th><td>{{ v.where }}</td></tr>
+    <tr><th>Started</th><td>{{ v.started }}</td></tr>
+    <tr><th>Impact</th><td>{{ r.business_impact }}</td></tr>
+    <tr><th>Owner</th><td>{{ v.owner }}</td></tr>
+    <tr><th>Seen before</th><td>{{ v.seen_line }}</td></tr>
+  </table>
+  <p class="actions"><a class="button" href="/incidents/{{ inc.id }}/rca">Root cause analysis</a>
+    {% if r.commands_for_human_execution %}<a class="button secondary-btn" href="/incidents/{{ inc.id }}/fix.sh">Download fix script</a>{% endif %}
+    <a class="button secondary-btn" href="/incidents/{{ inc.id }}/rca.md">RCA (Markdown)</a></p>
+  {% endif %}
+</section>
 
 {% if r %}
 <section class="card">
-  <h2>Summary</h2>
-  <p>{{ r.incident_summary }}</p>
-  <p class="muted">{{ r.business_impact }}</p>
-  <p class="small">Affected: {{ r.affected_resources | join(", ") or "-" }}</p>
-</section>
-<section class="card">
-  <h2>Root cause <span class="pill {{ 'ok' if r.root_cause_status == 'confirmed' else ('mid' if r.root_cause_status == 'probable' else 'bad') }}">{{ r.root_cause_status }} · {{ (r.root_cause_confidence * 100) | round | int }}%</span></h2>
-  <p>{{ r.root_cause }}</p>
-  <h3>Supporting evidence (observed)</h3>
-  <ul>{% for e in r.supporting_evidence %}<li><code>{{ e.source }}</code> {{ e.observation }}</li>{% else %}<li class="muted">None</li>{% endfor %}</ul>
-  {% if r.possible_contributing_factors %}<h3>Possible contributing factors (hypotheses)</h3>
-  <ul>{% for f in r.possible_contributing_factors %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
-  {% if r.symptoms %}<h3>Symptoms</h3><ul>{% for s in r.symptoms %}<li>{{ s }}</li>{% endfor %}</ul>{% endif %}
+  <h2 class="sec">1 · What happened</h2>
+  <p class="lead">{{ r.incident_summary }}</p>
 </section>
 
-{% if r.similar_incidents %}
 <section class="card">
-  <h2>Seen before</h2>
-  {% if r.recurrences_30d >= 2 %}<p class="warn"><b>Recurring:</b> {{ r.recurrences_30d }} earlier incidents of this type on this workload in 30 days. Fixes are not sticking.</p>{% endif %}
-  <table><tr><th>Incident</th><th>Date</th><th>Root cause</th><th>What fixed it</th><th>Resolved in</th><th>Agent was</th></tr>
+  <h2 class="sec">2 · Root cause</h2>
+  <div class="cause sevborder-{{ inc.severity }}">{{ r.root_cause }}</div>
+  <table class="glance small">
+    <tr><th>Confidence</th><td><b>{{ v.confidence_word }} ({{ (r.root_cause_confidence * 100) | round | int }}%)</b> · {{ r.root_cause_status }} · {{ v.confidence_basis }}</td></tr>
+    <tr><th>Track record</th><td>{{ v.track_record }} · <a href="/accuracy">accuracy</a></td></tr>
+  </table>
+  {% if r.possible_contributing_factors %}
+  <p class="muted small">Possible contributing factors <i>(hypotheses, not verified)</i></p>
+  <ul>{% for f in r.possible_contributing_factors %}<li>{{ f.replace(" (hypothesis)", "") }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if r.symptoms %}<details><summary>Symptoms</summary><ul>{% for x in r.symptoms %}<li>{{ x }}</li>{% endfor %}</ul></details>{% endif %}
+</section>
+
+<section class="card">
+  <h2 class="sec">3 · Evidence (observed)</h2>
+  <table class="evidence">
+    {% for e in r.supporting_evidence %}<tr><td><code class="src">{{ e.source }}</code></td><td>{{ e.observation }}</td></tr>
+    {% else %}<tr><td class="muted">Nothing conclusive was collected (see the checks in section 5).</td></tr>{% endfor %}
+  </table>
+</section>
+
+<section class="card">
+  <h2 class="sec">4 · Seen before</h2>
+  {% if r.recurrences_30d >= 2 %}<p class="warn"><b>Recurring:</b> {{ r.recurrences_30d }} earlier incidents of this type on this workload in 30 days. Fixes are not sticking: open a problem record.</p>{% endif %}
   {% for s in r.similar_incidents %}
-  <tr><td><a href="/incidents/{{ s.incident_id }}">{{ s.incident_id }}</a><div class="small muted">{{ s.match }}</div></td>
-    <td class="small">{{ s.date }}<div class="muted">{{ s.cluster }}/{{ s.workload }}</div></td>
-    <td class="small">{{ s.root_cause }}<div class="muted">({{ s.root_cause_source }})</div></td>
-    <td class="small">{{ s.fix or "not recorded" }}</td>
-    <td class="small">{{ "%d min" % s.time_to_resolve_min if s.time_to_resolve_min is not none else "-" }}</td>
-    <td>{% if s.agent_verdict %}<span class="pill {{ 'ok' if s.agent_verdict == 'correct' else ('mid' if s.agent_verdict == 'partial' else 'bad') }}">{{ s.agent_verdict }}</span>{% else %}<span class="muted small">not reviewed</span>{% endif %}</td></tr>
-  {% endfor %}</table>
-</section>
-{% endif %}
-{% if r.commands_for_human_execution %}
-<section class="card">
-  <h2>Ready to run <span class="muted small">(after approval; the agent does not run it)</span></h2>
-  <pre>{% for c in r.commands_for_human_execution %}{{ c.command }}
-{% endfor %}{% for c in r.verification_steps %}{{ c.command }}
-{% endfor %}</pre>
-  <p><a href="/incidents/{{ inc.id }}/fix.sh"><b>Download fix script</b></a> · <span class="muted">bash fix-{{ inc.id }}.sh
-  [--check | --rollback]: refuses the wrong cluster, asks before every change, verifies.</span></p>
-  <details><summary>Show the script</summary><pre>{{ script }}</pre></details>
-</section>
-{% endif %}
-
-<section class="card">
-  <h2>Resolution guide</h2>
-  {% if r.prerequisites %}<p><b>Prerequisites:</b> {{ r.prerequisites | join("; ") }}</p>{% endif %}
-  {% for step in r.resolution_steps %}
-  <h3>{{ step.title }}</h3>
-  {% if step.explanation %}<p class="muted">{{ step.explanation }}</p>{% endif %}
-  {% for c in step.commands %}
-  <div class="cmd kind-{{ c.kind }}">
-    <div class="kind">{{ KIND_LABELS[c.kind] }}</div>
-    <pre>{{ c.command }}</pre>
-    {% if c.explanation %}<div>{{ c.explanation }}</div>{% endif %}
-    {% if c.expected_output %}<div class="muted">Expected: {{ c.expected_output }}</div>{% endif %}
+  <div class="seen">
+    <b><a href="/incidents/{{ s.incident_id }}">{{ s.incident_id }}</a></b>
+    <span class="muted">· {{ s.date }} · {{ s.cluster }}/{{ s.workload }}{% if s.time_to_resolve_min is not none %} · resolved in {{ s.time_to_resolve_min }} min{% endif %}
+      · agent was {% if s.agent_verdict %}<span class="pill {{ 'ok' if s.agent_verdict == 'correct' else ('mid' if s.agent_verdict == 'partial' else 'bad') }}">{{ s.agent_verdict }}</span>{% else %}not reviewed{% endif %}</span><br>
+    <span class="muted">Cause:</span> {{ s.root_cause }} <span class="muted small">({{ s.root_cause_source }})</span><br>
+    <span class="muted">Fixed by:</span> {{ s.fix or "not recorded" }}
   </div>
-  {% endfor %}
-  {% endfor %}
-  {% if r.expected_outcome %}<p><b>Expected outcome:</b> {{ r.expected_outcome }}</p>{% endif %}
-  <p><b>Risk:</b> {{ r.risk_assessment or "-" }}</p>
+  {% else %}<p class="muted">No similar incidents on record.</p>{% endfor %}
+</section>
+
+<section class="card">
+  <h2 class="sec">5 · What to do</h2>
+  {% if r.commands_for_human_execution %}
+  <div class="fastest"><b>Fastest:</b> <a href="/incidents/{{ inc.id }}/fix.sh">download the fix script</a> and run <code>bash fix-{{ inc.id }}.sh</code>.
+    It refuses any cluster but <b>{{ r.cluster }}</b>, runs the checks, <b>asks before each change</b>, then verifies.
+    <code>--check</code> = look only · <code>--rollback</code> = undo.
+    <details><summary>Show the script</summary><pre>{{ script }}</pre></details></div>
+  <p class="muted small">Or step by step. The agent ran none of these; run fixes only after approval.{% if r.prerequisites %} Prerequisites: {{ r.prerequisites | join("; ") }}.{% endif %}</p>
+  {% else %}
+  <div class="nofix"><b>No fix is proposed</b>: the cause is not established. Run the checks below and record what you find in the RCA.</div>
+  {% endif %}
+  {% set n = namespace(i=0) %}
+  <ol class="steps">
+  {% for step in r.resolution_steps %}{% for c in step.commands %}{% set k = kinds[c.kind] %}
+    <li><span class="badge badge-{{ k[1] }}">{{ k[0] }}</span> <span class="muted small">{{ k[2] }}</span>
+      <div>{{ c.explanation }}</div>
+      {% if c.command.startswith("#") %}<div class="manual">Manual step: {{ c.command.lstrip("# ") }}</div>
+      {% else %}<pre class="cmd-dark">{{ c.command }}</pre>{% endif %}
+      {% if c.expected_output %}<div class="muted small">Expected: {{ c.expected_output }}</div>{% endif %}</li>
+  {% endfor %}{% endfor %}
+  </ol>
+</section>
+
+<section class="card">
+  <h2 class="sec">6 · Risk and prerequisites</h2>
+  <p>{{ r.risk_assessment or "-" }}</p>
+  {% if r.prerequisites %}<ul>{% for p in r.prerequisites %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
+  {% if r.expected_outcome %}<p class="muted">Expected outcome: {{ r.expected_outcome }}</p>{% endif %}
 </section>
 {% endif %}
 
 <section class="card">
-  <h2>Approval</h2>
+  <h2 class="sec">Approval</h2>
   <p class="muted">Approving records that you accept the proposed resolution. It does not run anything: you execute the commands yourself.</p>
   {% for a in approvals %}
   <div class="approval">
@@ -95,7 +123,7 @@
 </section>
 
 <section class="card">
-  <h2>Investigation evidence</h2>
+  <h2 class="sec">Appendix · investigation details</h2>
   <p class="small muted">Collected read-only in {{ evidence.duration_seconds }} s{% if evidence.truncated %}; truncated by limits{% endif %}.
   Engine: {{ r.analysis_engine if r else "-" }}. {% if r and r.analysis_notes %}Notes: {{ r.analysis_notes | join("; ") }}{% endif %}</p>
   <details open><summary>Commands executed by the agent (read-only)</summary><pre>{% for c in evidence.commands_executed or [] %}{{ c }}
@@ -115,7 +143,7 @@
 </section>
 
 <section class="card">
-  <h2>Audit log</h2>
+  <h2 class="sec">Audit log</h2>
   <table><tr><th>Time</th><th>Actor</th><th>Action</th><th>Details</th></tr>
   {% for a in audit %}<tr><td class="small">{{ a.ts }}</td><td>{{ a.actor }}</td><td>{{ a.action }}</td><td class="small">{{ a.details }}</td></tr>{% endfor %}</table>
 </section>

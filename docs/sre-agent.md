@@ -30,7 +30,7 @@ Alertmanager ── group, dedupe, inhibit ──► POST /api/v1/alerts?cluster
 | Area | Before | Now |
 |---|---|---|
 | Prometheus, Alertmanager, Grafana | Installed by Argo CD (`make monitoring`); Alertmanager had no receiver | Alertmanager routes to the agent (grouping, dedup, inhibition); 17 incident rules + coverage rules (Argo CD, VPC CNI IPs, Grafana); `make alert-coverage` |
-| Python service | none (only `tools/platform.py`) | `apps/sre-agent/` FastAPI app, 89 tests |
+| Python service | none (only `tools/platform.py`) | `apps/sre-agent/` FastAPI app, 92 tests |
 | RBAC for automation | team RoleBindings only | `sre-agent-readonly`: get/list/watch, no Secrets/ConfigMaps/exec/writes |
 | Email, AI, approvals, incident UI | none | added; LLM off by default (your choice: rule engine) |
 | Image builds | crane for the Go app | `ci/build-sre-agent.sh`: crane, no Docker; pushes to ECR from the jump host |
@@ -95,6 +95,25 @@ It handles **any alert** Prometheus raises in real time, not only the lab's scen
 Not used today: no external knowledge base, no web search. A novel failure without
 an LLM ends as **inconclusive** with next steps; that is deliberate, rather than a confident wrong answer.
 
+
+## Report layout (email, dashboard, RCA)
+
+Every incident is presented the same way in the email, the dashboard incident page and the plain-text email:
+
+| Part | Content |
+|---|---|
+| Header | severity · incident id · type, and a **plain-English headline** ("cache-warmer keeps getting killed: it needs more memory than its limit") |
+| At a glance | status (investigated in N s, approval state) · where (cluster › namespace › workload) · started · impact · owner · seen before |
+| 1 What happened | one sentence |
+| 2 Root cause | the cause; **confidence in words with what it rests on** ("High (90%) · stated directly by pod.status"); the **measured track record** for this incident type; contributing factors marked "not verified" |
+| 3 Evidence (observed) | source and what the agent saw |
+| 4 Seen before | similar past incidents: cause, what fixed it, time to resolve, whether the agent was right |
+| 5 What to do | "Fastest: bash fix.sh", then numbered steps badged **CHECK** (read-only), **FIX** (needs approval), **VERIFY**, **ROLLBACK** (only if worse) |
+| 6 Risk and prerequisites | |
+| Buttons | Review and approve · dashboard · RCA (when `SRE_AGENT_DASHBOARD_URL` is set) |
+
+The RCA email uses the same header, at-a-glance block and section style. The email subject keeps the required
+format `[SEVERITY] Kubernetes Incident Detected - <cluster> - <namespace>`.
 
 ## Ready-to-run commands and the fix script
 
@@ -256,7 +275,7 @@ Point each cluster's Alertmanager at `...?cluster=<its name>`. Incidents, histor
 
 ## Tests
 
-`make sre-agent-test` (also in the GitLab pipeline as `sre-agent-test`): 89 tests, no cluster needed.
+`make sre-agent-test` (also in the GitLab pipeline as `sre-agent-test`): 92 tests, no cluster needed.
 - Scenarios against a fake cluster: CrashLoopBackOff, OOMKilled, ImagePullBackOff, Pending (CPU, taint),
   Node NotReady, insufficient evidence, missing objects, CreateContainerConfigError, PVC, CoreDNS, RBAC 403s.
 - Security: allowlist, static scan for write/exec/Secret calls, RBAC manifest, redaction, approval makes zero API calls.

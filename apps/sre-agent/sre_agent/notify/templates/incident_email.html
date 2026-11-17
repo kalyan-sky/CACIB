@@ -1,79 +1,156 @@
+{#- Incident email. Same section order as the dashboard incident page and the RCA email. -#}
+{%- set sev = {"CRITICAL": ("#b42318", "#fef3f2"), "HIGH": ("#c4320a", "#fff6ed"), "MEDIUM": ("#b54708", "#fffaeb"),
+               "LOW": ("#175cd3", "#eff8ff"), "INFO": ("#475467", "#f9fafb")}[r.severity] -%}
+{%- set conf = r.root_cause_confidence -%}
+{%- set kinds = {
+  "diagnostic":   ("CHECK",    "#175cd3", "#eff8ff", "read-only"),
+  "remediation":  ("FIX",      "#b54708", "#fffaeb", "needs approval"),
+  "verification": ("VERIFY",   "#067647", "#ecfdf3", "read-only"),
+  "rollback":     ("ROLLBACK", "#b42318", "#fef3f2", "only if it gets worse")} -%}
 <!doctype html>
-<html><body style="font-family:Segoe UI,Helvetica,Arial,sans-serif;color:#1f2328;max-width:820px;margin:0 auto;padding:16px">
-{% set sev_color = {"CRITICAL":"#b42318","HIGH":"#c4320a","MEDIUM":"#b54708","LOW":"#1d4ed8","INFO":"#475467"}[r.severity] %}
-<p style="margin:0 0 4px;font-size:13px;color:#475467">Kubernetes SRE agent · read-only investigation</p>
-<h1 style="font-size:20px;margin:0 0 12px">
-  <span style="background:{{ sev_color }};color:#fff;padding:2px 8px;border-radius:4px;font-size:14px">{{ r.severity }}</span>
-  {{ r.incident_id }} · {{ r.incident_type }}
-</h1>
-<table style="border-collapse:collapse;font-size:14px;margin-bottom:12px">
-  <tr><td style="padding:2px 12px 2px 0;color:#475467">Cluster</td><td>{{ r.cluster }} ({{ environment }})</td></tr>
-  <tr><td style="padding:2px 12px 2px 0;color:#475467">Namespace</td><td>{{ r.namespace or "-" }}</td></tr>
-  <tr><td style="padding:2px 12px 2px 0;color:#475467">Affected</td><td>{{ r.affected_resources | join(", ") or "-" }}</td></tr>
-  <tr><td style="padding:2px 12px 2px 0;color:#475467">Started</td><td>{{ r.started_at or "-" }}</td></tr>
-  <tr><td style="padding:2px 12px 2px 0;color:#475467">Approval</td><td><b>{{ approval_status }}</b> (nothing has been changed in the cluster)</td></tr>
-  {% if link %}<tr><td style="padding:2px 12px 2px 0;color:#475467">Dashboard</td><td><a href="{{ link }}">{{ link }}</a> · <a href="{{ link }}/rca">RCA</a></td></tr>{% endif %}
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;background:#f2f4f7;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#101828">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f2f4f7;padding:16px 8px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;background:#ffffff;border:1px solid #eaecf0;border-radius:10px">
+
+<!-- ============ HEADER ============ -->
+<tr><td style="padding:18px 22px 14px;border-bottom:1px solid #eaecf0">
+  <div style="font-size:12px;color:#667085;letter-spacing:.3px">KUBERNETES SRE AGENT · READ-ONLY INVESTIGATION</div>
+  <div style="margin-top:8px">
+    <span style="display:inline-block;background:{{ sev[0] }};color:#fff;font-weight:700;font-size:12px;padding:3px 9px;border-radius:12px">{{ r.severity }}</span>
+    <span style="font-size:13px;color:#667085;margin-left:6px">{{ r.incident_id }} · {{ r.incident_type }}</span>
+  </div>
+  <div style="font-size:20px;font-weight:700;line-height:1.3;margin-top:6px">{{ v.headline }}</div>
+</td></tr>
+
+<!-- ============ AT A GLANCE ============ -->
+<tr><td style="padding:14px 22px;background:{{ sev[1] }}">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px">
+    {% for k, v in [("Status", v.status_line), ("Where", v.where), ("Started", v.started), ("Impact", r.business_impact),
+                    ("Owner", v.owner), ("Seen before", v.seen_line)] %}
+    <tr><td style="padding:3px 12px 3px 0;color:#667085;white-space:nowrap;vertical-align:top;width:92px">{{ k }}</td>
+        <td style="padding:3px 0;vertical-align:top">{{ v }}</td></tr>
+    {% endfor %}
+  </table>
+</td></tr>
+
+<!-- ============ 1. WHAT HAPPENED ============ -->
+<tr><td style="padding:18px 22px 4px">
+  <div style="font-size:13px;font-weight:700;color:#667085;letter-spacing:.4px">1 · WHAT HAPPENED</div>
+  <p style="margin:6px 0 0;font-size:15px;line-height:1.5">{{ r.incident_summary }}</p>
+</td></tr>
+
+<!-- ============ 2. ROOT CAUSE ============ -->
+<tr><td style="padding:16px 22px 4px">
+  <div style="font-size:13px;font-weight:700;color:#667085;letter-spacing:.4px">2 · ROOT CAUSE</div>
+  <div style="margin-top:8px;border-left:4px solid {{ sev[0] }};background:#f9fafb;padding:10px 12px;font-size:15px;line-height:1.5">
+    {{ r.root_cause }}
+  </div>
+  <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:8px;font-size:13px;color:#344054">
+    <tr><td style="padding:2px 10px 2px 0;color:#667085">Confidence</td>
+        <td><b>{{ v.confidence_word }} ({{ (conf * 100) | round | int }}%)</b> · {{ r.root_cause_status }} · {{ v.confidence_basis }}</td></tr>
+    <tr><td style="padding:2px 10px 2px 0;color:#667085">Track record</td>
+        <td>{{ v.track_record }}</td></tr>
+  </table>
+  {% if r.possible_contributing_factors %}
+  <div style="margin-top:10px;font-size:13px;color:#667085">Possible contributing factors <i>(hypotheses, not verified)</i></div>
+  <ul style="margin:4px 0 0;padding-left:18px;font-size:14px;color:#344054">
+    {% for f in r.possible_contributing_factors %}<li style="margin:2px 0">{{ f.replace(" (hypothesis)", "") }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</td></tr>
+
+<!-- ============ 3. EVIDENCE ============ -->
+<tr><td style="padding:16px 22px 4px">
+  <div style="font-size:13px;font-weight:700;color:#667085;letter-spacing:.4px">3 · EVIDENCE (OBSERVED)</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;font-size:14px;border:1px solid #eaecf0;border-radius:6px">
+    {% for e in r.supporting_evidence %}
+    <tr><td style="padding:7px 10px;border-bottom:1px solid #f2f4f7;width:120px;vertical-align:top">
+          <span style="font-family:Menlo,Consolas,monospace;font-size:12px;color:#475467;background:#f2f4f7;padding:1px 6px;border-radius:4px">{{ e.source }}</span></td>
+        <td style="padding:7px 10px;border-bottom:1px solid #f2f4f7;vertical-align:top">{{ e.observation }}</td></tr>
+    {% else %}<tr><td style="padding:8px 10px;color:#667085">Nothing conclusive was collected (see the checks in section 5).</td></tr>
+    {% endfor %}
+  </table>
+</td></tr>
+
+<!-- ============ 4. SEEN BEFORE ============ -->
+<tr><td style="padding:16px 22px 4px">
+  <div style="font-size:13px;font-weight:700;color:#667085;letter-spacing:.4px">4 · SEEN BEFORE</div>
+  {% if not r.similar_incidents %}<div style="margin-top:6px;font-size:14px;color:#667085">No similar incidents on record.</div>{% endif %}
+  {% if r.recurrences_30d >= 2 %}<div style="margin-top:6px;color:#b42318;font-size:14px"><b>Recurring:</b> {{ r.recurrences_30d }} earlier incidents of this type on this workload in 30 days. Fixes are not sticking: open a problem record.</div>{% endif %}
+  {% for s in r.similar_incidents %}
+  <div style="margin-top:8px;border:1px solid #eaecf0;border-radius:6px;padding:10px 12px;font-size:14px;line-height:1.5">
+    <b>{{ s.incident_id }}</b> <span style="color:#667085">· {{ s.date }}{% if s.time_to_resolve_min is not none %} · resolved in {{ s.time_to_resolve_min }} min{% endif %}
+    · agent was <b style="color:{{ '#067647' if s.agent_verdict == 'correct' else '#b42318' }}">{{ s.agent_verdict or "not reviewed" }}</b></span><br>
+    <span style="color:#667085">Cause:</span> {{ s.root_cause }}<br>
+    <span style="color:#667085">Fixed by:</span> {{ s.fix or "not recorded" }}
+  </div>
+  {% endfor %}
+</td></tr>
+
+<!-- ============ 5. WHAT TO DO ============ -->
+<tr><td style="padding:16px 22px 4px">
+  <div style="font-size:13px;font-weight:700;color:#667085;letter-spacing:.4px">5 · WHAT TO DO</div>
+  {% if r.commands_for_human_execution %}
+  <div style="margin-top:8px;background:#ecfdf3;border:1px solid #abefc6;border-radius:6px;padding:10px 12px;font-size:14px;line-height:1.5">
+    <b>Fastest:</b> save the attached <b>fix-{{ r.incident_id }}.sh.txt</b> as <code>fix.sh</code> and run <code>bash fix.sh</code>.
+    It refuses any cluster but <b>{{ r.cluster }}</b>, runs the checks, <b>asks before each change</b>, then verifies.
+    <code>--check</code> = look only · <code>--rollback</code> = undo.
+  </div>
+  <div style="margin-top:10px;font-size:13px;color:#667085">Or step by step:</div>
+  {% else %}
+  <div style="margin-top:8px;background:#fffaeb;border:1px solid #fec84b;border-radius:6px;padding:10px 12px;font-size:14px;line-height:1.5">
+    <b>No fix is proposed</b>: the cause is not established. Run the checks below and record what you find in the RCA.
+  </div>
+  {% endif %}
+  {% set n = namespace(i=0) %}
+  {% for step in r.resolution_steps %}{% for c in step.commands %}{% set n.i = n.i + 1 %}{% set k = kinds[c.kind] %}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px">
+    <tr><td style="font-size:14px;padding-bottom:4px">
+      <span style="display:inline-block;min-width:18px;font-weight:700;color:#344054">{{ n.i }}.</span>
+      <span style="display:inline-block;background:{{ k[2] }};color:{{ k[1] }};border:1px solid {{ k[1] }};font-size:11px;font-weight:700;padding:1px 7px;border-radius:10px">{{ k[0] }}</span>
+      <span style="font-size:12px;color:#667085">{{ k[3] }}</span>
+      <div style="margin:4px 0 0 22px;color:#344054">{{ c.explanation }}</div>
+    </td></tr>
+    <tr><td style="padding-left:22px">
+      {% if c.command.startswith("#") %}
+      <div style="background:#fffaeb;border:1px dashed #fec84b;border-radius:6px;padding:8px 10px;font-size:13px">Manual step: {{ c.command.lstrip("# ") }}</div>
+      {% else %}
+      <pre style="margin:0;background:#0d1117;color:#e6edf3;border-radius:6px;padding:9px 11px;font-size:12.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word">{{ c.command }}</pre>
+      {% endif %}
+      {% if c.expected_output %}<div style="font-size:12px;color:#667085;margin-top:3px">Expected: {{ c.expected_output }}</div>{% endif %}
+    </td></tr>
+  </table>
+  {% endfor %}{% endfor %}
+</td></tr>
+
+<!-- ============ 6. RISK ============ -->
+<tr><td style="padding:16px 22px 4px">
+  <div style="font-size:13px;font-weight:700;color:#667085;letter-spacing:.4px">6 · RISK AND PREREQUISITES</div>
+  <p style="margin:6px 0 0;font-size:14px;line-height:1.5">{{ r.risk_assessment }}</p>
+  {% if r.prerequisites %}<ul style="margin:4px 0 0;padding-left:18px;font-size:14px;color:#344054">
+    {% for p in r.prerequisites %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
+</td></tr>
+
+<!-- ============ ACTIONS ============ -->
+<tr><td style="padding:18px 22px">
+  {% if v.links %}
+  {% for label, href, colour in [("Review and approve", v.links.incident, "#175cd3"), ("Open in dashboard", v.links.dashboard, "#475467"), ("Root cause analysis", v.links.rca, "#475467")] %}
+  <a href="{{ href }}" style="display:inline-block;margin:0 6px 6px 0;background:{{ colour }};color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:9px 14px;border-radius:6px">{{ label }}</a>
+  {% endfor %}
+  {% else %}
+  <div style="font-size:13px;color:#667085">Approve and review in the agent dashboard (<code>kubectl -n sre-agent port-forward svc/sre-agent 8080</code>, incident {{ r.incident_id }}).</div>
+  {% endif %}
+</td></tr>
+
+<!-- ============ FOOTER ============ -->
+<tr><td style="padding:14px 22px 18px;border-top:1px solid #eaecf0;font-size:12px;color:#667085;line-height:1.5">
+  <b>What the agent checked</b> (all read-only, {{ r.agent_actions_taken | length }} commands):
+  {{ r.agent_actions_taken[:4] | map("replace", "read-only: ", "") | join(" · ") }} … full list in the dashboard.<br><br>
+  The agent made <b>no changes</b>. Fix and rollback commands are proposals for an authorised engineer, run only after approval.
+  Analysis engine: {{ r.analysis_engine }}.{% if r.analysis_notes %}<br>Notes: {{ r.analysis_notes | join("; ") }}{% endif %}
+</td></tr>
+
 </table>
-
-<h2 style="font-size:16px;margin:16px 0 4px">Summary</h2>
-<p style="margin:0">{{ r.incident_summary }}</p>
-<p style="margin:4px 0 0;color:#475467">{{ r.business_impact }}</p>
-
-<h2 style="font-size:16px;margin:16px 0 4px">Probable root cause ({{ r.root_cause_status }}, confidence {{ (r.root_cause_confidence * 100) | round | int }}%)</h2>
-<p style="margin:0">{{ r.root_cause }}</p>
-
-{% if r.similar_incidents %}
-<h2 style="font-size:16px;margin:16px 0 4px">Seen before</h2>
-{% if r.recurrences_30d >= 2 %}<p style="margin:0 0 4px;color:#b42318"><b>Recurring:</b> {{ r.recurrences_30d }} earlier incidents of this type on this workload in 30 days. Fixes are not sticking.</p>{% endif %}
-<ul style="margin:0;padding-left:20px">
-{% for s in r.similar_incidents %}<li><b>{{ s.incident_id }}</b> ({{ s.date }}, {{ s.cluster }}/{{ s.workload }}): {{ s.root_cause }} <i style="color:#475467">({{ s.root_cause_source }})</i>.
-{% if s.fix %}Fixed by: {{ s.fix }}.{% endif %}{% if s.time_to_resolve_min is not none %} Resolved in {{ s.time_to_resolve_min }} min.{% endif %}
-{% if s.agent_verdict %} Agent diagnosis was <b>{{ s.agent_verdict }}</b>.{% endif %}</li>
-{% endfor %}</ul>
-{% endif %}
-{% if r.commands_for_human_execution %}
-<h2 style="font-size:16px;margin:16px 0 4px">Ready to run (after approval)</h2>
-<p style="margin:0 0 4px;font-size:13px;color:#475467">Values come from the evidence; anything only a person can know is asked for when you run it.
-Copy and paste in order, or save the attached <b>fix-{{ r.incident_id }}.sh.txt</b> as <code>fix.sh</code> and run <code>bash fix.sh</code>
-(it checks the cluster, asks before each change, verifies, and has <code>--rollback</code>).</p>
-<pre style="background:#0d1117;color:#e6edf3;border-radius:6px;padding:10px;white-space:pre-wrap;font-size:13px">{% for c in r.commands_for_human_execution %}{{ c.command }}
-{% endfor %}{% for c in r.verification_steps %}{{ c.command }}
-{% endfor %}</pre>
-{% endif %}
-<h2 style="font-size:16px;margin:16px 0 4px">Supporting evidence (observed)</h2>
-<ul style="margin:0;padding-left:20px">
-{% for e in r.supporting_evidence %}<li><code style="color:#475467">{{ e.source }}</code> {{ e.observation }}</li>{% else %}<li>None collected.</li>{% endfor %}
-</ul>
-{% if r.possible_contributing_factors %}
-<h2 style="font-size:16px;margin:16px 0 4px">Possible contributing factors (hypotheses, not verified)</h2>
-<ul style="margin:0;padding-left:20px">{% for f in r.possible_contributing_factors %}<li>{{ f }}</li>{% endfor %}</ul>
-{% endif %}
-
-<h2 style="font-size:16px;margin:16px 0 4px">Step-by-step resolution guide</h2>
-{% if r.prerequisites %}<p style="margin:0 0 6px"><b>Prerequisites:</b> {{ r.prerequisites | join("; ") }}</p>{% endif %}
-{% for step in r.resolution_steps %}
-<h3 style="font-size:14px;margin:12px 0 4px">{{ step.title }}</h3>
-{% if step.explanation %}<p style="margin:0 0 4px;color:#475467">{{ step.explanation }}</p>{% endif %}
-{% for c in step.commands %}
-<div style="margin:6px 0 10px">
-  <div style="font-size:12px;font-weight:600;color:{% if c.kind in ('remediation','rollback') %}#b42318{% else %}#067647{% endif %}">{{ labels[c.kind] }}</div>
-  <pre style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:4px;padding:8px;margin:2px 0;white-space:pre-wrap;font-size:13px">{{ c.command }}</pre>
-  {% if c.explanation %}<div style="font-size:13px">{{ c.explanation }}</div>{% endif %}
-  {% if c.expected_output %}<div style="font-size:13px;color:#475467">Expected: {{ c.expected_output }}</div>{% endif %}
-</div>
-{% endfor %}
-{% endfor %}
-{% if r.expected_outcome %}<p><b>Expected outcome:</b> {{ r.expected_outcome }}</p>{% endif %}
-
-<h2 style="font-size:16px;margin:16px 0 4px">Risk assessment</h2>
-<p style="margin:0">{{ r.risk_assessment or "-" }}</p>
-
-<h2 style="font-size:16px;margin:16px 0 4px">Commands the agent executed (all read-only)</h2>
-<pre style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:4px;padding:8px;white-space:pre-wrap;font-size:12px">{% for a in r.agent_actions_taken %}{{ a }}
-{% else %}none{% endfor %}</pre>
-{% if r.analysis_notes %}<p style="font-size:12px;color:#475467">Notes: {{ r.analysis_notes | join("; ") }}</p>{% endif %}
-<p style="font-size:12px;color:#475467;border-top:1px solid #d0d7de;padding-top:8px">
-Analysis engine: {{ r.analysis_engine }}. The agent has read-only access and made no changes.
-Remediation and rollback commands are proposals for an authorised engineer, to run only after approval.
-</p>
+</td></tr></table>
 </body></html>
