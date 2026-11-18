@@ -1,0 +1,40 @@
+# Applied by scripts/sre-agent-up.sh only when a history replica is configured:
+# Prometheus scrapes Litestream, and alerts if the agent's history stops reaching the replica
+# (the history would then be lost with the cluster).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: sre-agent-replica
+  namespace: sre-agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sre-agent
+  endpoints:
+    - port: replica-metrics
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: sre-agent-replica
+  namespace: sre-agent
+spec:
+  groups:
+    - name: sre-agent-history
+      rules:
+        - alert: SreAgentHistoryReplicaDown
+          expr: absent(up{job="sre-agent",endpoint="replica-metrics"} == 1)
+          for: 10m
+          labels: {severity: warning, sre_severity: medium}
+          annotations:
+            summary: "The SRE agent's history replication (Litestream) is not running"
+            description: "Incidents, RCAs and approvals are not copied to the replica; they would be lost with the cluster."
+        - alert: SreAgentHistoryReplicationErrors
+          expr: (sum(increase(litestream_sync_error_count[15m])) or vector(0)) + (sum(increase(litestream_replica_operation_errors_total[15m])) or vector(0)) > 0
+          for: 15m
+          labels: {severity: warning, sre_severity: medium}
+          annotations:
+            summary: "The SRE agent cannot write its history to the replica (S3 access or credentials)"
+            description: "Check the pod logs for Litestream errors, the Pod Identity association, and the bucket policy."

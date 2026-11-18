@@ -59,6 +59,11 @@ Prerequisites: the EKS cluster with `compute = "ec2"`, `make gitops-bootstrap` a
    healthy, Alertmanager routing to it, then `INC-000N OOMKilled confirmed ... email sent` within ~6 minutes,
    and the email in your inbox. Then `./k8s-classics.sh reset c07`.
 
+## History that survives `make tf-down`
+Incidents, RCAs, approvals, the audit log and accuracy verdicts are replicated to S3 by
+Litestream and restored on the next install: `make history-up`, `make tf-up`,
+`make sre-agent-up`. See [sre-agent-history.md](sre-agent-history.md).
+
 ## Using it
 
 - **Email** subject: `[CRITICAL] Kubernetes Incident Detected - bank-sim - c07-oomkilled`. It contains the

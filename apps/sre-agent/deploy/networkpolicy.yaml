@@ -16,6 +16,7 @@ spec:
               kubernetes.io/metadata.name: monitoring
       ports:
         - {protocol: TCP, port: 8080}
+        - {protocol: TCP, port: 9091} # Litestream replication metrics
     - ports: # dashboard over TLS; the load balancer's security group allows one IP only
         - {protocol: TCP, port: 8443}
   egress:
@@ -30,3 +31,8 @@ spec:
         - {protocol: TCP, port: 443} # Kubernetes API (EKS endpoint), TLS checks, an optional LLM API
         - {protocol: TCP, port: 8443} # TLS checks of in-cluster endpoints whose pods listen on 8443
         - {protocol: TCP, port: 587} # SMTP submission (STARTTLS)
+    - to: # AWS credentials for the history replica (S3 itself is on 443 above)
+        - ipBlock: {cidr: 169.254.170.23/32} # EKS Pod Identity agent
+        - ipBlock: {cidr: 169.254.169.254/32} # instance metadata (node_role fallback)
+      ports:
+        - {protocol: TCP, port: 80}

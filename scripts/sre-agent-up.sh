@@ -12,6 +12,8 @@
 #   SRE_AGENT_IMAGE=<image>   skip the build and deploy this image
 #   APPROVER=<name>           dashboard user with the approver role (default: your Linux user)
 #   ENVIRONMENT=prod|uat|dev  environment name in incidents and email routing (default: dev)
+#   REPLICA_URL=<url>         where to keep the agent's history (default: the S3 replica from
+#                             Terraform, set up by `make history-up`; "none" turns it off)
 source "$(dirname "$0")/lib.sh"
 
 need terraform "https://developer.hashicorp.com/terraform/install"
@@ -31,6 +33,18 @@ aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION" --alias "$KUBE_CO
 k get namespace monitoring >/dev/null 2>&1 || die "the monitoring stack is not installed - run make monitoring first"
 [ "$(tf_output compute)" = ec2 ] || die "the agent stores incidents on an EBS volume: use compute = \"ec2\""
 DEPLOY="$ROOT/apps/sre-agent/deploy"
+
+# Durable history: Terraform output (empty until `make history-up` + terraform apply).
+if [ -z "${REPLICA_URL:-}" ]; then
+  REPLICA_URL=$(terraform -chdir="$ROOT/terraform" output -raw agent_history_replica_url 2>/dev/null || true)
+fi
+[ "$REPLICA_URL" = none ] && REPLICA_URL=""
+case "$REPLICA_URL" in s3://*|file:///*|gs://*|abs://*|sftp://*|"") ;; *) die "REPLICA_URL looks wrong: $REPLICA_URL" ;; esac
+if [ -n "$REPLICA_URL" ]; then
+  info "History replica: $REPLICA_URL (survives make tf-down)"
+else
+  warn "no history replica: incidents, RCAs and accuracy data are lost with the cluster (make history-up to keep them)"
+fi
 
 # ------------------------------------------------------------------ image
 # Not $IMAGE: lib.sh sets that to the bank's txn-service image.
@@ -113,11 +127,15 @@ YAML
 fi
 
 info "Deploying the agent ($CLUSTER, environment $ENVIRONMENT)"
-for f in config.yaml deployment.yaml networkpolicy.yaml monitoring.yaml; do
+files="config.yaml deployment.yaml networkpolicy.yaml monitoring.yaml"
+[ -n "$REPLICA_URL" ] && files="$files monitoring-replica.yaml"
+for f in $files; do
   sed -e "s#__IMAGE__#$AGENT_IMAGE#" -e "s#__CLUSTER__#$CLUSTER#" -e "s#__ENVIRONMENT__#$ENVIRONMENT#" \
       -e "s#__SMTP_USER__#$SMTP_USER#" -e "s#__EMAIL_TO__#$EMAIL_TO#" -e "s#__DASHBOARD_URL__#$dashboard_url#" \
+      -e "s#__REPLICA_URL__#$REPLICA_URL#" -e "s#__REGION__#$REGION#" \
       "$DEPLOY/$f" | k apply -f - >/dev/null
 done
+[ -z "$REPLICA_URL" ] && k delete -f "$DEPLOY/monitoring-replica.yaml" --ignore-not-found >/dev/null 2>&1
 k -n sre-agent rollout restart deployment/sre-agent >/dev/null 2>&1 || true  # pick up config changes
 k -n sre-agent rollout status deployment/sre-agent --timeout=300s
 
@@ -162,5 +180,6 @@ cat <<MSG
     Dashboard:  ${dashboard_url:-not exposed. On the jump host: kubectl -n sre-agent port-forward svc/sre-agent 8080}
                 user: $APPROVER (approver), the password you just chose
     Emails:     $EMAIL_TO (from $SMTP_USER), severity MEDIUM and above
+    History:    ${REPLICA_URL:-local volume only (lost with the cluster; make history-up to keep it)}
     Test it:    ./scripts/sre-agent-verify.sh --incident   (starts classic case c07 OOMKilled in its own namespace)
 MSG

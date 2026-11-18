@@ -10,6 +10,10 @@ data:
   SRE_AGENT_CLUSTER_ENV: "__ENVIRONMENT__"
   SRE_AGENT_IN_CLUSTER: "true"
   SRE_AGENT_DB: /data/sre-agent.db
+  # Durable history (bin/start + Litestream). Empty: history lives only on the EBS volume.
+  SRE_AGENT_REPLICA_URL: "__REPLICA_URL__"
+  SRE_AGENT_REPLICA_REGION: "__REGION__"
+  SRE_AGENT_REPLICA_REQUIRED: "true" # a failed restore stops the pod instead of starting with no history
   SRE_AGENT_SMTP_HOST: smtp.gmail.com
   SRE_AGENT_SMTP_PORT: "587"
   SRE_AGENT_SMTP_STARTTLS: "true"

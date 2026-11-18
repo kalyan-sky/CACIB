@@ -85,3 +85,20 @@ variable "admin_principal_arns" {
   type        = list(string)
   default     = []
 }
+
+variable "agent_history_bucket" {
+  description = "S3 bucket for the SRE agent's history (from terraform/history: `make history-up`). Empty = no durable history: incidents, RCAs and accuracy data are lost with the cluster."
+  type        = string
+  default     = ""
+}
+
+variable "agent_history_access" {
+  description = "How the agent gets S3 credentials: pod_identity (EKS Pod Identity: only the agent's ServiceAccount, recommended) or node_role (every pod on the nodes can use it; fallback if Pod Identity is blocked)"
+  type        = string
+  default     = "pod_identity"
+
+  validation {
+    condition     = contains(["pod_identity", "node_role"], var.agent_history_access)
+    error_message = "agent_history_access must be pod_identity or node_role"
+  }
+}

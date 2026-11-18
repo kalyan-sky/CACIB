@@ -1,0 +1,69 @@
+#!/bin/sh
+# Start the SRE agent, with durable history when SRE_AGENT_REPLICA_URL is set.
+#
+#   SRE_AGENT_REPLICA_URL     where Litestream keeps the database copy. Any Litestream replica:
+#                               s3://bucket/path        AWS S3 (credentials: EKS Pod Identity,
+#                                                       node role, or the usual AWS_* variables)
+#                               s3://bucket/path?endpoint=https://minio.internal:9000
+#                                                       S3-compatible store (on-prem / HPC sites)
+#                               file:///shared/sre-agent  a shared filesystem (NFS, Lustre, GPFS)
+#                               gs://, abs://, sftp://  GCS, Azure Blob, SFTP
+#                             Empty: no replica; history lives only on the local volume.
+#   SRE_AGENT_REPLICA_REGION  bucket region for s3:// URLs (optional)
+#   SRE_AGENT_REPLICA_REQUIRED  true (default): refuse to start if the restore fails, rather
+#                             than start empty and lose the trail. false: start anyway.
+#   SRE_AGENT_REPLICA_METRICS_ADDR  Litestream metrics, default :9091 ("" turns them off)
+#   SRE_AGENT_DB              database path (default /data/sre-agent.db)
+#   SRE_AGENT_APP_CMD         the agent command (default: python -m sre_agent.api)
+#
+# Order: restore (only when there is no local database and a replica exists), then run the
+# agent under `litestream replicate`, which streams every committed change to the replica and
+# flushes on shutdown. Works the same in a container, a VM or a systemd unit on an HPC login node.
+set -eu
+
+DB="${SRE_AGENT_DB:-/data/sre-agent.db}"
+URL="${SRE_AGENT_REPLICA_URL:-}"
+APP="${SRE_AGENT_APP_CMD:-python -m sre_agent.api}"
+CONFIG="${SRE_AGENT_LITESTREAM_CONFIG:-${TMPDIR:-/tmp}/sre-agent-litestream.yml}"
+REQUIRED="${SRE_AGENT_REPLICA_REQUIRED:-true}"
+METRICS="${SRE_AGENT_REPLICA_METRICS_ADDR-:9091}"
+
+log() { printf '{"level":"%s","logger":"sre_agent.start","message":"%s"}\n' "$1" "$2" >&2; }
+
+if [ -z "$URL" ]; then
+  log warning "SRE_AGENT_REPLICA_URL not set: history is kept only on the local volume and is lost with it"
+  exec $APP
+fi
+
+case "$URL" in
+  s3://?*|file:///?*|gs://?*|abs://?*|sftp://?*) ;;
+  *) log error "SRE_AGENT_REPLICA_URL must start with s3://, file:///, gs://, abs:// or sftp://"; exit 64 ;;
+esac
+case "$URL" in *'"'*|*"'"*|*' '*|*'
+'*) log error "SRE_AGENT_REPLICA_URL contains quotes, spaces or newlines"; exit 64 ;; esac
+
+command -v litestream >/dev/null 2>&1 || { log error "litestream is not installed in this image"; exit 69; }
+mkdir -p "$(dirname "$DB")"
+
+umask 077
+{
+  [ -n "$METRICS" ] && printf 'addr: "%s"\n' "$METRICS"
+  printf 'logging:\n  type: json\n'
+  printf 'snapshot:\n  interval: 24h\n  retention: 168h\n'   # a week of point-in-time restore
+  printf 'dbs:\n  - path: "%s"\n    replica:\n      url: "%s"\n' "$DB" "$URL"
+  [ -n "${SRE_AGENT_REPLICA_REGION:-}" ] && printf '      region: "%s"\n' "$SRE_AGENT_REPLICA_REGION"
+  true
+} > "$CONFIG"
+
+if [ -e "$DB" ]; then
+  log info "local database found: keeping it, replicating to the replica"
+elif litestream restore -no-expand-env -config "$CONFIG" -if-db-not-exists -if-replica-exists "$DB"; then
+  if [ -e "$DB" ]; then log info "history restored from the replica"; else log info "no replica yet: starting with an empty history"; fi
+elif [ "$REQUIRED" = "false" ]; then
+  log warning "restore failed; starting with an empty history because SRE_AGENT_REPLICA_REQUIRED=false"
+else
+  log error "restore failed: not starting, so the incident history is not silently lost. Check the replica URL and credentials, or set SRE_AGENT_REPLICA_REQUIRED=false"
+  exit 75
+fi
+
+exec litestream replicate -no-expand-env -config "$CONFIG" -exec "$APP"

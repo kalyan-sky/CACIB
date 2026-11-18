@@ -30,6 +30,7 @@ spec:
     spec:
       serviceAccountName: sre-agent
       automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30 # Litestream flushes the last changes to the replica on SIGTERM
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -44,6 +45,7 @@ spec:
           ports:
             - {name: http, containerPort: 8080}
             - {name: https, containerPort: 8443}
+            - {name: replica-metrics, containerPort: 9091} # Litestream, when a replica is set
           envFrom:
             - configMapRef:
                 name: sre-agent-config
@@ -56,6 +58,7 @@ spec:
             - {name: SRE_AGENT_TLS_CERT, value: /etc/sre-agent/tls/tls.crt}
             - {name: SRE_AGENT_TLS_KEY, value: /etc/sre-agent/tls/tls.key}
             - {name: SRE_AGENT_TLS_CA_FILE, value: /etc/sre-agent/trust/ca.crt} # internal CA for TLS checks
+          # bin/start restores the history from the replica, then runs the agent under Litestream
           readinessProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 10
@@ -109,3 +112,4 @@ spec:
     app.kubernetes.io/name: sre-agent
   ports:
     - {name: http, port: 8080, targetPort: http}
+    - {name: replica-metrics, port: 9091, targetPort: replica-metrics}

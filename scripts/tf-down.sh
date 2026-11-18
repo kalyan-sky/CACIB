@@ -27,6 +27,13 @@ if aws lambda get-function --function-name "$CLUSTER-portal" >/dev/null 2>&1 ||
 fi
 
 if k get --raw /readyz >/dev/null 2>&1; then
+  # Stop the SRE agent cleanly first: on SIGTERM Litestream flushes the last changes to the
+  # history replica (S3), which outlives this cluster.
+  if k -n sre-agent get deployment sre-agent >/dev/null 2>&1; then
+    info "Stopping the SRE agent (flushes its history to the replica)"
+    k -n sre-agent scale deployment/sre-agent --replicas=0 >/dev/null
+    k -n sre-agent wait --for=delete pod -l app.kubernetes.io/name=sre-agent --timeout=90s >/dev/null 2>&1 || true
+  fi
   # EBS volumes created for PersistentVolumeClaims are not in Terraform either:
   # delete the claims while the CSI driver can still delete their volumes.
   if [ -n "$(k get pvc -A -o name 2>/dev/null)" ]; then
@@ -68,3 +75,6 @@ left=$(aws ec2 describe-volumes --filters "Name=tag:KubernetesCluster,Values=$CL
 kubectl config delete-context "$KUBE_CONTEXT" >/dev/null 2>&1 || true
 rm -f "$SIM_STATE/context" "$SIM_STATE/eks-region" "$SIM_STATE/gitops-remote"
 info "Done. The GitLab project and its container registry are untouched (free); delete them in GitLab if you want."
+if terraform -chdir="$ROOT/terraform/history" output -raw bucket >/dev/null 2>&1; then
+  info "The SRE agent's history bucket is kept (cents per month); the next make sre-agent-up restores it."
+fi

@@ -2,6 +2,7 @@
 # Verify the SRE agent on the live cluster without changing anything it shouldn't:
 #   1. RBAC: the agent's ServiceAccount can read, and can NOT write, read Secrets or exec
 #   2. the agent is healthy and Alertmanager routes alerts to it
+#   3. its history is replicated (when a replica is configured)
 #   --incident: also start classic case c07 (OOMKilled, its own namespace) and wait for
 #               the agent to investigate it; reset it afterwards with ./k8s-classics.sh reset c07
 source "$(dirname "$0")/lib.sh"
@@ -77,6 +78,15 @@ errs=$(curl -s -m 5 "http://127.0.0.1:$port/metrics" 2>/dev/null |
   awk '/^sre_agent_kubernetes_api_errors_total/ && /status="403"/ {s+=$2} END {print s+0}' || true)
 [ "${errs:-0}" = 0 ] && ok "no 403s from the Kubernetes API so far" || warn "$errs Kubernetes 403s: RBAC is denying something the agent needs"
 kill $pf 2>/dev/null || true
+
+replica=$(jp '{.data.SRE_AGENT_REPLICA_URL}' configmap sre-agent-config -n sre-agent)
+if [ -z "$replica" ]; then
+  warn "no history replica: incidents and RCAs are lost with the cluster (./scripts/sre-agent-history.sh up)"
+elif k -n sre-agent logs deploy/sre-agent --tail=-1 2>/dev/null | grep -q '"sre_agent.start".*\(restored\|empty history\|local database\)'; then
+  ok "history replicated to $replica (details: ./scripts/sre-agent-history.sh status)"
+else
+  ko "history replica $replica set, but bin/start did not report a restore (kubectl -n sre-agent logs deploy/sre-agent)"
+fi
 
 if [ "${1:-}" = "--incident" ]; then
   info "Test incident: classic case c07 (OOMKilled) in namespace c07-oomkilled"

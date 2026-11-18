@@ -6,6 +6,10 @@ terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/terraform.tfvars
+terraform/**/*.tfstate
+terraform/**/*.tfstate.*
+terraform/**/terraform.tfvars
+terraform/**/.terraform/
 terraform/tfplan
 .venv-sre-agent/
 .pytest_cache/

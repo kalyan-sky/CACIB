@@ -23,7 +23,7 @@ spec:
     - name: sre-agent
       rules:
         - alert: SreAgentDown
-          expr: absent(up{job="sre-agent"} == 1)
+          expr: absent(up{job="sre-agent",endpoint="http"} == 1)
           for: 5m
           labels: {severity: critical, sre_severity: high}
           annotations:

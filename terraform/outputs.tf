@@ -32,3 +32,12 @@ output "configure_kubectl" {
   description = "Run this to point kubectl at the cluster"
   value       = "aws eks update-kubeconfig --name ${aws_eks_cluster.this.name} --region ${var.region} --alias eks-${aws_eks_cluster.this.name}"
 }
+
+output "agent_history_replica_url" {
+  description = "Where the SRE agent replicates its history (empty: not configured, or compute is fargate)"
+  value       = local.history ? "s3://${var.agent_history_bucket}/${local.history_prefix}" : ""
+}
+
+output "agent_history_access" {
+  value = local.history ? var.agent_history_access : ""
+}

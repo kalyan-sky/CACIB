@@ -1,0 +1,2 @@
+# cp terraform.tfvars.example terraform.tfvars  (or let `make history-up` write it)
+region = "ap-southeast-2"

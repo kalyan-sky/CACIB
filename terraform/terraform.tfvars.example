@@ -13,3 +13,8 @@ node_count         = 3
 
 # Also give your AWS console identity cluster-admin (aws sts get-caller-identity in CloudShell).
 # admin_principal_arns = ["arn:aws:iam::123456789012:user/console-user"]
+
+# SRE agent history that survives `make tf-down` (bucket from `make history-up`,
+# which also writes this line for you):
+# agent_history_bucket = "bank-sim-sre-history-123456789012-ap-southeast-2"
+# agent_history_access = "pod_identity"   # or "node_role" if Pod Identity is blocked
