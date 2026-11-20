@@ -46,8 +46,8 @@ Choose `compute` in `terraform/terraform.tfvars`: `"fargate"` for the classics, 
 2. Classics: `./k8s-classics.sh start c07`. Bank: `REPO_URL=https://gitlab.com/kalyansiddam0/cacib.git ARGOCD_UI_IP=<laptop IP> make gitops-bootstrap`.
 3. Continue with c05–c16, then the AWS drills in `docs/aws-hands-on.md` (A1, A3, A2, A5, A6).
 4. Optional: `git push gitlab HEAD:main`. Run it on its own and enter the token at the prompt.
-5. **SRE agent history (Phase 1, built, not yet run live):** `make history-up`, `make tf-up`,
-   `make sre-agent-up`, then `./scripts/sre-agent-history.sh status` and `check`.
+5. **SRE agent history (Phase 1):** replication to S3 verified live 2026-11-20 (verify script,
+   alert coverage 13/13 jobs, c07 incident → RCA for review → final RCA). Still to prove: restore after a rebuild.
    Done when the dashboard shows the old incidents after a `tf-down` / `tf-up`.
    Guide: `docs/sre-agent-history.md`. Decisions: `docs/adr/`.
 
